@@ -7,7 +7,8 @@ class CampusBase(BaseModel):
     image_path: Optional[str] = None
 
 class CampusCreate(CampusBase):
-    pass
+    name: str
+    description: str
 
 class CampusUpdate(BaseModel):
     name: Optional[str] = None
