@@ -1,184 +1,86 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
-from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
-from typing import Optional
-from app.users.dependencies.auth import (
-    create_access_token,
-    create_refresh_token,
-    verify_password,
-    verify_token,
-    ACCESS_TOKEN_EXPIRE_MINUTES,
-    REFRESH_TOKEN_EXPIRE_DAYS,
-    REFRESH_SECRET_KEY
-)
-from app.users.models import Admin
-from app.database.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
+from jose import jwt, JWTError
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from app.database.database import get_db
+from app.users.models import Admin
+from app.users.dependencies.auth import (
+    create_token,
+    set_auth_cookies,
+    verify_password,
+    admin_required
+)
+from app.database.config.settings import settings
+
+from app.api.endpoints.base import logger
 
 router = APIRouter(tags=["Authentication"])
 
-# Модели запросов
-class LoginData(BaseModel):
-    username: str = Field(..., example="admin")
-    password: str = Field(..., example="password123")
 
-class RefreshData(BaseModel):
-    refresh_token: str = Field(..., example="")
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
-# Модели ответов
+
 class TokenResponse(BaseModel):
-    access_token: str = Field(
-        default="",
-        example="",
-        description="JWT токен для доступа к защищенным ресурсам"
-    )
-    refresh_token: Optional[str] = Field(
-        default="",
-        example="",
-        description="Токен для обновления access token (только для /token)"
-    )
-    token_type: str = Field(
-        default="bearer",
-        example="bearer",
-        description="Тип токена"
-    )
-    expires_at: Optional[datetime] = Field(
-        default=None,
-        example="2024-01-01T00:00:00Z",
-        description="Время истечения токена"
-    )
-    user_data: Optional[dict] = Field(
-        default={},
-        example={"username": "admin", "is_admin": True},
-        description="Данные пользователя"
-    )
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+    user_data: dict
+
 
 class ErrorResponse(BaseModel):
-    detail: str = Field(..., example="Ошибка аутентификации")
-    error_type: str = Field(..., example="AUTH_ERROR")
+    detail: str
+    error_type: str
 
-# Примеры для Swagger
-SWAGGER_LOGIN_RESPONSE = {
-    "example": {
-        "access_token": "",
-        "refresh_token": "",
-        "token_type": "bearer",
-        "expires_at": "2024-01-01T00:00:00Z",
-        "user_data": {"username": "", "is_admin": False}
-    }
-}
-
-SWAGGER_REFRESH_RESPONSE = {
-    "example": {
-        "access_token": "",
-        "token_type": "bearer",
-        "expires_at": "2024-01-01T00:00:00Z",
-        "user_data": {"username": "", "is_admin": False}
-    }
-}
-
-ERROR_EXAMPLES = {
-    "invalid_credentials": {
-        "summary": "Неверные учетные данные",
-        "value": {"detail": "Неверное имя пользователя или пароль", "error_type": "AUTH_ERROR"}
-    },
-    "invalid_token": {
-        "summary": "Неверный токен",
-        "value": {"detail": "Недействительный токен", "error_type": "AUTH_ERROR"}
-    },
-    "server_error": {
-        "summary": "Ошибка сервера",
-        "value": {"detail": "Внутренняя ошибка сервера", "error_type": "SERVER_ERROR"}
-    }
-}
 
 @router.post("/token")
 async def login(
-    response: Response,  # <-- Важно инжектить Response
-    login_data: LoginData,
-    db: Session = Depends(get_db)
+        response: Response,
+        credentials: LoginRequest,
+        db: Session = Depends(get_db)
 ):
     try:
-        admin = db.query(Admin).filter(Admin.username == login_data.username).first()
+        logger.info(f"Login attempt for user: {credentials.username}")
 
-        if not admin or not verify_password(login_data.password, admin.hashed_password):
-            raise HTTPException(status_code=401, detail="Неверные учетные данные")
+        admin = db.query(Admin).filter(
+            Admin.username == credentials.username
+        ).first()
 
-        # Создаем токены
-        access_token = create_access_token(data={"sub": admin.username})
-        refresh_token = create_refresh_token(data={"sub": admin.username})
-
-        # Устанавливаем cookies
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            secure=False,  # Для разработки без HTTPS
-            samesite="Lax",
-            domain="localhost"  # Укажите ваш домен
-        )
-
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
-            secure=False,
-            samesite="Lax",
-            domain="localhost"
-        )
-
-        return {"status": "success"}
-
-    except Exception as e:
-        print(f"Ошибка авторизации: {str(e)}")
-        raise HTTPException(status_code=500, detail="Ошибка сервера")
-
-
-@router.post(
-    "/refresh",
-    response_model=TokenResponse,
-    responses={
-        200: {"content": {"application/json": {"examples": SWAGGER_REFRESH_RESPONSE}}},
-        401: {"model": ErrorResponse, "content": {"application/json": {"examples": ERROR_EXAMPLES}}},
-        500: {"model": ErrorResponse}
-    }
-)
-async def refresh_token(
-    response: Response,
-    refresh_data: RefreshData,
-    db: Session = Depends(get_db)
-):
-    try:
-        payload = verify_token(refresh_data.refresh_token, REFRESH_SECRET_KEY)
-        if payload.get("type") != "refresh":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"detail": "Неверный refresh токен", "error_type": "AUTH_ERROR"}
-            )
-
-        admin = db.query(Admin).filter(Admin.username == payload.get("sub")).first()
         if not admin:
+            logger.warning(f"User not found: {credentials.username}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"detail": "Пользователь не найден", "error_type": "AUTH_ERROR"}
+                detail={"detail": "Неверные учетные данные", "error_type": "AUTH_ERROR"}
             )
 
-        new_access_token = create_access_token(data={"sub": admin.username, "is_admin": True})
-        expires_at = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        if not verify_password(credentials.password, admin.hashed_password):
+            logger.warning(f"Invalid password for user: {credentials.username}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"detail": "Неверные учетные данные", "error_type": "AUTH_ERROR"}
+            )
 
-        response.set_cookie(
-            key="access_token",
-            value=new_access_token,
-            httponly=True,
-            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
-        )
+        access_token = create_token({
+            "sub": admin.username,
+            "is_admin": admin.is_admin
+        })
+
+        refresh_token = create_token({
+            "sub": admin.username
+        }, is_refresh=True)
+
+        set_auth_cookies(response, access_token, refresh_token)
+
+        logger.info(f"Successful login for user: {credentials.username}")
 
         return {
-            "access_token": new_access_token,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
             "token_type": "bearer",
-            "expires_at": expires_at,
+            "expires_at": datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE),
             "user_data": {
                 "username": admin.username,
                 "is_admin": admin.is_admin
@@ -188,7 +90,61 @@ async def refresh_token(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Login error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"detail": "Внутренняя ошибка сервера", "error_type": "SERVER_ERROR"}
         )
+
+@router.post("/auth/refresh")
+async def refresh_token(
+        request: Request,
+        response: Response,
+        db: Session = Depends(get_db)
+):
+    try:
+        refresh_token = request.cookies.get("refresh_token")
+        if not refresh_token:
+            raise HTTPException(status_code=401, detail="Отсутствует refresh token")
+
+        payload = jwt.decode(
+            refresh_token,
+            settings.REFRESH_SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
+
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Неверный тип токена")
+
+        admin = db.query(Admin).filter(
+            Admin.username == payload.get("sub")
+        ).first()
+
+        if not admin:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+        new_access = create_token({
+            "sub": admin.username,
+            "is_admin": admin.is_admin
+        })
+
+        response.set_cookie(
+            key="access_token",
+            value=new_access,
+            httponly=True,
+            max_age=settings.ACCESS_TOKEN_EXPIRE * 60,
+            **settings.COOKIE_CONFIG
+        )
+
+        return {
+            "access_token": new_access,
+            "token_type": "bearer",
+            "expires_at": datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE),
+            "user_data": {
+                "username": admin.username,
+                "is_admin": admin.is_admin
+            }
+        }
+
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Недействительный refresh token")

@@ -39,10 +39,15 @@ def get_readme_html():
 # Добавляем middleware CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://map.sereosly.ru"],
+    allow_origins=[
+        "https://dev.sereosly.ru",
+        "https://map.sereosly.ru",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Set-Cookie"]
 )
 
 # Подключаем статические файлы
