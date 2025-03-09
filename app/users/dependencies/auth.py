@@ -44,6 +44,9 @@ def verify_token(token: str, secret_key: str):
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
+def get_password_hash(password: str):
+    return pwd_context.hash(password)
+
 async def get_token(request: Request):
     # Проверяем токен из заголовка Authorization
     auth_header = request.headers.get("Authorization")
