@@ -35,7 +35,7 @@ async def create_room(db: Session, room: RoomCreate, svg_file: Optional[UploadFi
     db.refresh(db_room)
     return db_room
 
-async def update_room(db: Session, room_id: int, room: RoomUpdate, svg_file: Optional[UploadFile] = None) -> Room | None:
+async def update_room(db: Session, room_id: int, room: RoomUpdate, svg_file: Optional[UploadFile] = None) -> Optional[Room]:
     """Обновить существующую комнату."""
     db_room = get_room(db, room_id)
     if not db_room:
