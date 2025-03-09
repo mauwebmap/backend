@@ -1,3 +1,4 @@
+from typing import Optional
 from sqlalchemy.orm import Session
 from app.map.models.room import Room
 from app.map.models.building import Building
@@ -9,7 +10,7 @@ from shutil import copyfileobj
 SVG_DIR = "static/svg/rooms"
 os.makedirs(SVG_DIR, exist_ok=True)
 
-def get_room(db: Session, room_id: int) -> Room | None:
+def get_room(db: Session, room_id: int) -> Optional[Room]:
     """Получить комнату по ID."""
     return db.query(Room).filter(Room.id == room_id).first()
 
