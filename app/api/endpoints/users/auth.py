@@ -92,17 +92,9 @@ ERROR_EXAMPLES = {
     }
 }
 
-@router.post(
-    "/token",
-    response_model=TokenResponse,
-    responses={
-        200: {"content": {"application/json": {"examples": SWAGGER_LOGIN_RESPONSE}}},
-        401: {"model": ErrorResponse, "content": {"application/json": {"examples": ERROR_EXAMPLES}}},
-        500: {"model": ErrorResponse}
-    }
-)
+@router.post("/token")
 async def login(
-    response: Response,
+    response: Response,  # <-- Важно инжектить Response
     login_data: LoginData,
     db: Session = Depends(get_db)
 ):
@@ -110,40 +102,39 @@ async def login(
         admin = db.query(Admin).filter(Admin.username == login_data.username).first()
 
         if not admin or not verify_password(login_data.password, admin.hashed_password):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"detail": "Неверное имя пользователя или пароль", "error_type": "AUTH_ERROR"}
-            )
+            raise HTTPException(status_code=401, detail="Неверные учетные данные")
 
-        access_token = create_access_token(data={"sub": admin.username, "is_admin": True})
-        refresh_token = create_refresh_token(data={"sub": admin.username, "is_admin": True})
-        expires_at = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        # Создаем токены
+        access_token = create_access_token(data={"sub": admin.username})
+        refresh_token = create_refresh_token(data={"sub": admin.username})
 
+        # Устанавливаем cookies
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
-            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            secure=False,  # Для разработки без HTTPS
+            samesite="Lax",
+            domain="localhost"  # Укажите ваш домен
         )
 
-        return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer",
-            "expires_at": expires_at,
-            "user_data": {
-                "username": admin.username,
-                "is_admin": admin.is_admin
-            }
-        }
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            httponly=True,
+            max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+            secure=False,
+            samesite="Lax",
+            domain="localhost"
+        )
 
-    except HTTPException:
-        raise
+        return {"status": "success"}
+
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"detail": "Внутренняя ошибка сервера", "error_type": "SERVER_ERROR"}
-        )
+        print(f"Ошибка авторизации: {str(e)}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
+
 
 @router.post(
     "/refresh",
