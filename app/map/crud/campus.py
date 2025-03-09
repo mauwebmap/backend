@@ -28,7 +28,7 @@ async def save_svg(file: UploadFile) -> str:
 
     return f"/static/svg/campuses/{unique_name}"
 
-def check_name_exists(db: Session, name: str, exclude_id: int = None):
+def check_name_exists(db: Session, name: str, exclude_id: Optional[int] = None):
     """Check for existing campus name"""
     query = db.query(Campus).filter(Campus.name == name)
     if exclude_id:

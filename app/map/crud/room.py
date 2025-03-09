@@ -18,7 +18,7 @@ def get_rooms(db: Session, skip: int = 0, limit: int = 100) -> list[Room]:
     """Получить список комнат с пагинацией."""
     return db.query(Room).offset(skip).limit(limit).all()
 
-async def create_room(db: Session, room: RoomCreate, svg_file: UploadFile | None = None) -> Room:
+async def create_room(db: Session, room: RoomCreate, svg_file: Optional[UploadFile] = None) -> Room:
     """Создать новую комнату."""
     room_dict = room.dict()
     if svg_file:
@@ -35,7 +35,7 @@ async def create_room(db: Session, room: RoomCreate, svg_file: UploadFile | None
     db.refresh(db_room)
     return db_room
 
-async def update_room(db: Session, room_id: int, room: RoomUpdate, svg_file: UploadFile | None = None) -> Room | None:
+async def update_room(db: Session, room_id: int, room: RoomUpdate, svg_file: Optional[UploadFile] = None) -> Room | None:
     """Обновить существующую комнату."""
     db_room = get_room(db, room_id)
     if not db_room:
@@ -56,7 +56,7 @@ async def update_room(db: Session, room_id: int, room: RoomUpdate, svg_file: Upl
     db.refresh(db_room)
     return db_room
 
-def delete_room(db: Session, room_id: int) -> Room | None:
+def delete_room(db: Session, room_id: int) -> Optional[Room]:
     """Удалить комнату."""
     db_room = get_room(db, room_id)
     if not db_room:
