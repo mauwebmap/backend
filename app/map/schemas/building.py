@@ -24,4 +24,4 @@ class BuildingResponse(BuildingBase):
     image_path: Optional[str] = Field(None, description="Путь к SVG-файлу здания")
 
     class Config:
-        orm_mode = True
+        from_attributes = True

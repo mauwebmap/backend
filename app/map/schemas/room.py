@@ -30,4 +30,4 @@ class RoomResponse(RoomBase):
     image_path: Optional[str] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True

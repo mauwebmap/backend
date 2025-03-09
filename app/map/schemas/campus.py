@@ -20,4 +20,4 @@ class CampusResponse(CampusBase):
     image_path: Optional[str]
 
     class Config:
-        orm_mode = True
+        from_attributes = True
