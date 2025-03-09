@@ -1,22 +1,23 @@
 from pydantic import BaseModel
 from typing import Optional
 
+
 class CampusBase(BaseModel):
     name: str
     description: Optional[str] = None
-    image_path: Optional[str] = None
+
 
 class CampusCreate(CampusBase):
-    name: str
-    description: str
+    pass
 
-class CampusUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    image_path: Optional[str] = None
 
-class Campus(CampusBase):
+class CampusUpdate(CampusBase):
+    pass
+
+
+class CampusResponse(CampusBase):
     id: int
+    image_path: Optional[str]
 
     class Config:
         orm_mode = True

@@ -4,6 +4,7 @@ from app.database.database import Base
 
 class Building(Base):
     __tablename__ = "buildings"
+
     id = Column(Integer, primary_key=True, index=True)
     campus_id = Column(Integer, ForeignKey("campuses.id"), nullable=False)
     name = Column(String(255), nullable=False)

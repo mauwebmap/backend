@@ -1,44 +1,54 @@
-from typing import Optional
-import uuid
-from sqlalchemy.orm import Session
-from app.map.models.campus import Campus
-from app.map.schemas.campus import CampusCreate, CampusUpdate
 import os
-from fastapi import UploadFile
-from shutil import copyfileobj
+import uuid
+from typing import Optional, Dict
+from sqlalchemy.orm import Session
+from fastapi import UploadFile, HTTPException
+from app.map.models.campus import Campus
 
-SVG_DIR = "static/svg/campuses"
+SVG_DIR = os.path.abspath("static/svg/campuses")
 os.makedirs(SVG_DIR, exist_ok=True)
 
 def get_campus(db: Session, campus_id: int):
     return db.query(Campus).filter(Campus.id == campus_id).first()
 
-def get_campuses(db: Session, skip: int = 0, limit: int = 100):
+def get_all_campuses(db: Session, skip: int = 0, limit: int = 100):
     return db.query(Campus).offset(skip).limit(limit).all()
 
+async def save_svg(file: UploadFile) -> str:
+    """Save SVG file with UUID name"""
+    if not file.filename.lower().endswith(".svg"):
+        raise HTTPException(400, "Only SVG files allowed")
+
+    unique_name = f"{uuid.uuid4().hex}.svg"
+    file_path = os.path.join(SVG_DIR, unique_name)
+
+    contents = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(contents)
+
+    return f"/static/svg/campuses/{unique_name}"
+
+def check_name_exists(db: Session, name: str, exclude_id: int = None):
+    """Check for existing campus name"""
+    query = db.query(Campus).filter(Campus.name == name)
+    if exclude_id:
+        query = query.filter(Campus.id != exclude_id)
+    return query.first() is not None
 
 async def create_campus(
-        db: Session,
-        name: str,
-        description: str,
-        svg_file: UploadFile = None
+    db: Session,
+    name: str,
+    description: Optional[str],
+    svg_file: Optional[UploadFile]
 ) -> Campus:
-    image_path = None
+    # Check for existing name
+    if check_name_exists(db, name):
+        raise HTTPException(400, "Campus name already exists")
 
-    if svg_file:
-        # Генерация имени с UUID
-        file_ext = os.path.splitext(svg_file.filename)[-1]  # Получаем расширение (.svg)
-        unique_filename = f"campus_{uuid.uuid4().hex}{file_ext}"  # Формат: campus_<uuid>.svg
-        file_path = os.path.join(SVG_DIR, unique_filename)
+    # Handle file upload
+    image_path = await save_svg(svg_file) if svg_file else None
 
-        # Сохраняем файл
-        contents = await svg_file.read()
-        with open(file_path, "wb") as buffer:
-            buffer.write(contents)
-
-        image_path = f"/{file_path}"  # Путь в формате: /static/svg/campuses/campus_<uuid>.svg
-
-    # Создаем объект в БД
+    # Create object
     db_campus = Campus(
         name=name,
         description=description,
@@ -50,50 +60,74 @@ async def create_campus(
     db.refresh(db_campus)
     return db_campus
 
-
 async def update_campus(
-        db: Session,
-        campus_id: int,
-        campus: CampusUpdate,
-        svg_file: Optional[UploadFile] = None
-):
-    db_campus = get_campus(db, campus_id)
-    if not db_campus:
-        return None
+    db: Session,
+    campus_id: int,
+    update_data: dict,
+    svg_file: Optional[UploadFile] = None
+) -> Campus:
+    campus = db.query(Campus).get(campus_id)
+    if not campus:
+        raise HTTPException(404, "Campus not found")
 
-    update_data = campus.dict(exclude_unset=True)
+    # Удаляем None-значения
+    update_data = {k: v for k, v in update_data.items() if v is not None}
 
-    # Обновление SVG-файла с UUID
+    # Проверка имени
+    if "name" in update_data:
+        if check_name_exists(db, update_data["name"], exclude_id=campus_id):
+            raise HTTPException(400, "Name already exists")
+        campus.name = update_data["name"]
+
+    # Обновление описания
+    if "description" in update_data:
+        campus.description = update_data["description"]
+
+    # Обработка файла
     if svg_file:
-        # Удаляем старый файл
-        if db_campus.image_path and os.path.exists(db_campus.image_path.lstrip('/')):
-            os.remove(db_campus.image_path.lstrip('/'))
+        # Валидация расширения
+        if not svg_file.filename.lower().endswith(".svg"):
+            raise HTTPException(400, "Only SVG files allowed")
 
-        # Генерируем уникальное имя как в create_campus
-        file_ext = os.path.splitext(svg_file.filename)[-1]
-        unique_name = f"{db_campus.name}_{uuid.uuid4().hex}{file_ext}"
+        # Удаление старого файла
+        if campus.image_path:
+            try:
+                os.remove(campus.image_path.lstrip('/'))
+            except FileNotFoundError:
+                pass
+
+        # Генерация нового имени
+        unique_name = f"{uuid.uuid4().hex}.svg"
         file_path = os.path.join(SVG_DIR, unique_name)
 
-        # Асинхронное сохранение
+        # Сохранение
         contents = await svg_file.read()
-        with open(file_path, "wb") as buffer:
-            buffer.write(contents)
+        with open(file_path, "wb") as f:
+            f.write(contents)
 
-        update_data["image_path"] = f"/{file_path}"
-
-    for key, value in update_data.items():
-        setattr(db_campus, key, value)
+        campus.image_path = f"/static/svg/campuses/{unique_name}"
 
     db.commit()
-    db.refresh(db_campus)
-    return db_campus
+    db.refresh(campus)
+    return campus
 
 def delete_campus(db: Session, campus_id: int):
     db_campus = get_campus(db, campus_id)
     if not db_campus:
         return None
-    if db_campus.image_path and os.path.exists(db_campus.image_path[1:]):
-        os.remove(db_campus.image_path[1:])
+
+    # Удаляем связанный SVG-файл
+    delete_svg(db_campus.image_path)
     db.delete(db_campus)
     db.commit()
     return db_campus
+
+def delete_svg(file_path: str):
+    """Удаляет SVG-файл по указанному пути, если он существует."""
+    if file_path and os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except FileNotFoundError:
+            print(f"Файл {file_path} не найден для удаления.")
+        except Exception as e:
+            print(f"Ошибка при удалении файла {file_path}: {e}")

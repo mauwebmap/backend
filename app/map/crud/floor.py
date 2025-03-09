@@ -1,11 +1,10 @@
-from typing import Optional
-
-from sqlalchemy.orm import Session
-from app.map.models.floor import Floor
-from app.map.schemas.floor import FloorCreate, FloorUpdate
 import os
-from fastapi import UploadFile
+from typing import Optional
+from sqlalchemy.orm import Session
+from fastapi import UploadFile, HTTPException, status
 from shutil import copyfileobj
+from uuid import uuid4
+from app.map.models.floor import Floor
 
 SVG_DIR = "static/svg/floors"
 os.makedirs(SVG_DIR, exist_ok=True)
@@ -13,51 +12,98 @@ os.makedirs(SVG_DIR, exist_ok=True)
 def get_floor(db: Session, floor_id: int):
     return db.query(Floor).filter(Floor.id == floor_id).first()
 
-def get_floors(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(Floor).offset(skip).limit(limit).all()
+def get_all_floors(db: Session, building_id: Optional[int] = None, skip: int = 0, limit: int = 100):
+    query = db.query(Floor)
+    if building_id:
+        query = query.filter(Floor.building_id == building_id)
+    return query.offset(skip).limit(limit).all()
 
-async def create_floor(db: Session, floor: FloorCreate, svg_file: Optional[UploadFile] = None):
-    if svg_file:
-        building = db.query(Building).filter(Building.id == floor.building_id).first()
-        svg_path = f"{SVG_DIR}/floor_{floor.floor_number}_building_{building.name if building else floor.building_id}_{svg_file.filename}"
-        with open(svg_path, "wb") as buffer:
-            copyfileobj(svg_file.file, buffer)
-        floor_dict = floor.dict()
-        floor_dict["image_path"] = f"/{svg_path}"
-    else:
-        floor_dict = floor.dict()
+async def save_svg_file(file: UploadFile) -> str:
+    """Сохраняет SVG-файл с уникальным именем."""
+    if not file.filename.lower().endswith(".svg"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only SVG files are allowed"
+        )
 
-    db_floor = Floor(**floor_dict)
-    db.add(db_floor)
-    db.commit()
-    db.refresh(db_floor)
-    return db_floor
+    unique_name = f"{uuid4().hex}.svg"
+    file_path = os.path.join(SVG_DIR, unique_name)
 
-async def update_floor(db: Session, floor_id: int, floor: FloorUpdate, svg_file: Optional[UploadFile] = None):
-    db_floor = get_floor(db, floor_id)
-    if not db_floor:
-        return None
+    with open(file_path, "wb") as buffer:
+        copyfileobj(file.file, buffer)
 
-    update_data = floor.dict(exclude_unset=True)
-    if svg_file:
-        building = db.query(Building).filter(Building.id == db_floor.building_id).first()
-        svg_path = f"{SVG_DIR}/floor_{db_floor.floor_number}_building_{building.name if building else db_floor.building_id}_{svg_file.filename}"
-        with open(svg_path, "wb") as buffer:
-            copyfileobj(svg_file.file, buffer)
-        update_data["image_path"] = f"/{svg_path}"
+    return f"/{SVG_DIR}/{unique_name}"
 
-    for key, value in update_data.items():
-        setattr(db_floor, key, value)
-    db.commit()
-    db.refresh(db_floor)
-    return db_floor
+async def create_floor(db: Session, floor: dict, svg_file: Optional[UploadFile] = None):
+    try:
+        # Проверяем существование здания
+        building = db.query(Building).filter(Building.id == floor["building_id"]).first()
+        if not building:
+            raise HTTPException(status_code=404, detail="Building not found")
+
+        # Сохраняем SVG, если он есть
+        if svg_file:
+            floor["image_path"] = await save_svg_file(svg_file)
+
+        db_floor = Floor(**floor)
+        db.add(db_floor)
+        db.commit()
+        db.refresh(db_floor)
+        return db_floor
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}"
+        )
+
+async def update_floor(db: Session, floor_id: int, floor: dict, svg_file: Optional[UploadFile] = None):
+    try:
+        db_floor = get_floor(db, floor_id)
+        if not db_floor:
+            raise HTTPException(status_code=404, detail="Floor not found")
+
+        # Обновляем данные
+        update_data = {k: v for k, v in floor.items() if v is not None}
+        if svg_file:
+            if db_floor.image_path and os.path.exists(db_floor.image_path[1:]):
+                os.remove(db_floor.image_path[1:])
+            update_data["image_path"] = await save_svg_file(svg_file)
+
+        for key, value in update_data.items():
+            setattr(db_floor, key, value)
+
+        db.commit()
+        db.refresh(db_floor)
+        return db_floor
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}"
+        )
 
 def delete_floor(db: Session, floor_id: int):
-    db_floor = get_floor(db, floor_id)
-    if not db_floor:
-        return None
-    if db_floor.image_path and os.path.exists(db_floor.image_path[1:]):
-        os.remove(db_floor.image_path[1:])
-    db.delete(db_floor)
-    db.commit()
-    return db_floor
+    try:
+        db_floor = get_floor(db, floor_id)
+        if not db_floor:
+            raise HTTPException(status_code=404, detail="Floor not found")
+
+        if db_floor.image_path and os.path.exists(db_floor.image_path[1:]):
+            os.remove(db_floor.image_path[1:])
+
+        db.delete(db_floor)
+        db.commit()
+        return db_floor
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}"
+        )

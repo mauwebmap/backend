@@ -1,31 +1,27 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 class BuildingBase(BaseModel):
-    campus_id: int
-    name: str
-    x: float
-    y: float
-    x_head: float
-    y_head: float
-    description: Optional[str] = None
-    image_path: Optional[str] = None  # Путь к SVG-файлу
+    campus_id: int = Field(..., description="ID кампуса, к которому относится здание")
+    name: str = Field(..., max_length=255, description="Название здания")
+    x: float = Field(..., description="Координата X входа")
+    y: float = Field(..., description="Координата Y входа")
+    x_head: float = Field(..., description="Координата X центра здания")
+    y_head: float = Field(..., description="Координата Y центра здания")
+    description: Optional[str] = Field(None, description="Описание здания")
+
 
 class BuildingCreate(BuildingBase):
     pass
 
-class BuildingUpdate(BaseModel):
-    campus_id: Optional[int] = None
-    name: Optional[str] = None
-    x: Optional[float] = None
-    y: Optional[float] = None
-    x_head: Optional[float] = None
-    y_head: Optional[float] = None
-    description: Optional[str] = None
-    image_path: Optional[str] = None
 
-class Building(BuildingBase):
+class BuildingUpdate(BuildingBase):
+    pass
+
+
+class BuildingResponse(BuildingBase):
     id: int
+    image_path: Optional[str] = Field(None, description="Путь к SVG-файлу здания")
 
     class Config:
         orm_mode = True

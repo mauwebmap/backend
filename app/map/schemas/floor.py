@@ -16,8 +16,12 @@ class FloorUpdate(BaseModel):
     image_path: Optional[str] = None
     description: Optional[str] = None
 
-class Floor(FloorBase):
+    class Config:
+        orm_mode = True
+
+class FloorResponse(FloorBase):
     id: int
+    image_path: Optional[str] = None
 
     class Config:
         orm_mode = True
