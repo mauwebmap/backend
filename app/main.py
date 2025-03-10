@@ -50,6 +50,9 @@ app.add_middleware(
     expose_headers=["Set-Cookie"]
 )
 
+# Создаем директорию static, если её нет
+static_dir = Path("static")
+static_dir.mkdir(exist_ok=True)
 # Подключаем статические файлы
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

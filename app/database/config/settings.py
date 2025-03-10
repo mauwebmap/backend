@@ -26,8 +26,7 @@ class Settings(BaseSettings):
         return {
             "secure": self.ENV == "prod",
             "samesite": "lax",
-            "domain": ".sereosly.ru" if self.ENV == "prod" else None,
-            "path": "/"
+            "domain": ".sereosly.ru" if self.ENV == "prod" else None
         }
 
     # Строка подключения к БД

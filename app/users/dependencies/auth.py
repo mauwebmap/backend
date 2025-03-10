@@ -4,9 +4,7 @@ from fastapi import HTTPException, Request, Response, Depends
 from app.database.config.settings import settings
 from passlib.context import CryptContext
 
-# Настройка криптографии
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def create_token(data: dict, is_refresh: bool = False) -> str:
     secret = settings.REFRESH_SECRET_KEY if is_refresh else settings.SECRET_KEY
@@ -22,7 +20,6 @@ def create_token(data: dict, is_refresh: bool = False) -> str:
         secret,
         algorithm=settings.ALGORITHM
     )
-
 
 def set_auth_cookies(response: Response, access: str, refresh: str):
     response.set_cookie(
@@ -42,7 +39,6 @@ def set_auth_cookies(response: Response, access: str, refresh: str):
         **settings.COOKIE_CONFIG
     )
 
-
 async def get_token(request: Request):
     token = request.cookies.get("access_token") or \
             (request.headers.get("Authorization") or "").replace("Bearer ", "")
@@ -50,14 +46,9 @@ async def get_token(request: Request):
         raise HTTPException(status_code=401, detail="Токен не найден")
     return token
 
-
 async def admin_required(token: str = Depends(get_token)):
     try:
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM]
-        )
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
 
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Неверный тип токена")
@@ -67,13 +58,11 @@ async def admin_required(token: str = Depends(get_token)):
 
         return payload
 
-    except JWTError as e:
-        raise HTTPException(status_code=401, detail=f"Ошибка токена: {str(e)}")
-
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Ошибка токена")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
-
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
