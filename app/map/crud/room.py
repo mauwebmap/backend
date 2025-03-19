@@ -1,68 +1,47 @@
-from typing import Optional
-from sqlalchemy.orm import Session
-from app.map.models.room import Room
-from app.map.models.building import Building
-from app.map.schemas.room import RoomCreate, RoomUpdate
-import os
-from fastapi import UploadFile
-from shutil import copyfileobj
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from app.models.enums import ConnectionType  # Импортируем перечисление типов соединений
 
-SVG_DIR = "static/svg/rooms"
-os.makedirs(SVG_DIR, exist_ok=True)
+# Схема для создания соединений
+class ConnectionCreate(BaseModel):
+    segment_id: int = Field(..., description="ID коридора, с которым связана комната")
+    type: ConnectionType = Field(..., description="Тип соединения (например, 'door', 'stairs')")
+    weight: float = Field(..., description="Вес соединения (например, время прохождения)")
 
-def get_room(db: Session, room_id: int) -> Optional[Room]:
-    """Получить комнату по ID."""
-    return db.query(Room).filter(Room.id == room_id).first()
+# Базовая схема для комнат
+class RoomBase(BaseModel):
+    building_id: int = Field(..., description="ID здания, к которому относится комната")
+    floor_id: int = Field(..., description="ID этажа, к которому относится комната")
+    name: str = Field(..., description="Название комнаты")
+    cab_id: str = Field(..., description="Кабинетный номер")
+    coordinates: Optional[dict] = Field(None, description="Мультиплатформенные координаты (JSON)")
+    cab_x: Optional[float] = Field(None, description="Координата X кабинета")
+    cab_y: Optional[float] = Field(None, description="Координата Y кабинета")
+    description: Optional[str] = Field(None, description="Описание комнаты")
 
-def get_rooms(db: Session, skip: int = 0, limit: int = 100) -> list[Room]:
-    """Получить список комнат с пагинацией."""
-    return db.query(Room).offset(skip).limit(limit).all()
+# Схема для создания комнаты
+class RoomCreate(RoomBase):
+    connections: List[ConnectionCreate] = Field([], description="Список соединений с коридорами")
+    image_path: Optional[str] = Field(None, description="Путь к изображению комнаты")
 
-async def create_room(db: Session, room: RoomCreate, svg_file: Optional[UploadFile] = None) -> Room:
-    """Создать новую комнату."""
-    room_dict = room.dict()
-    if svg_file:
-        building = db.query(Building).filter(Building.id == room.building_id).first()
-        svg_filename = f"room_{room.name}_building_{building.name if building else room.building_id}_{svg_file.filename}"
-        svg_path = os.path.join(SVG_DIR, svg_filename)
-        with open(svg_path, "wb") as buffer:
-            copyfileobj(svg_file.file, buffer)
-        room_dict["image_path"] = f"/{svg_path}"
+# Схема для обновления комнаты
+class RoomUpdate(RoomBase):
+    building_id: Optional[int] = Field(None, description="ID здания, к которому относится комната")
+    floor_id: Optional[int] = Field(None, description="ID этажа, к которому относится комната")
+    name: Optional[str] = Field(None, description="Название комнаты")
+    cab_id: Optional[str] = Field(None, description="Кабинетный номер")
+    coordinates: Optional[dict] = Field(None, description="Мультиплатформенные координаты (JSON)")
+    cab_x: Optional[float] = Field(None, description="Координата X кабинета")
+    cab_y: Optional[float] = Field(None, description="Координата Y кабинета")
+    description: Optional[str] = Field(None, description="Описание комнаты")
+    connections: Optional[List[ConnectionCreate]] = Field(None, description="Список соединений с коридорами")
+    image_path: Optional[str] = Field(None, description="Путь к изображению комнаты")
 
-    db_room = Room(**room_dict)
-    db.add(db_room)
-    db.commit()
-    db.refresh(db_room)
-    return db_room
+# Схема для ответа
+class RoomResponse(RoomBase):
+    id: int = Field(..., description="Уникальный идентификатор комнаты")
+    connections: List[ConnectionCreate] = Field([], description="Список соединений с коридорами")
+    image_path: Optional[str] = Field(None, description="Путь к изображению комнаты")
 
-async def update_room(db: Session, room_id: int, room: RoomUpdate, svg_file: Optional[UploadFile] = None) -> Optional[Room]:
-    """Обновить существующую комнату."""
-    db_room = get_room(db, room_id)
-    if not db_room:
-        return None
-
-    update_data = room.dict(exclude_unset=True)  # Только переданные поля
-    if svg_file:
-        building = db.query(Building).filter(Building.id == db_room.building_id).first()
-        svg_filename = f"room_{db_room.name}_building_{building.name if building else db_room.building_id}_{svg_file.filename}"
-        svg_path = os.path.join(SVG_DIR, svg_filename)
-        with open(svg_path, "wb") as buffer:
-            copyfileobj(svg_file.file, buffer)
-        update_data["image_path"] = f"/{svg_path}"
-
-    for key, value in update_data.items():
-        setattr(db_room, key, value)
-    db.commit()
-    db.refresh(db_room)
-    return db_room
-
-def delete_room(db: Session, room_id: int) -> Optional[Room]:
-    """Удалить комнату."""
-    db_room = get_room(db, room_id)
-    if not db_room:
-        return None
-    if db_room.image_path and os.path.exists(db_room.image_path[1:]):  # Убираем начальный "/"
-        os.remove(db_room.image_path[1:])
-    db.delete(db_room)
-    db.commit()
-    return db_room
+    class Config:
+        from_attributes = True

@@ -14,5 +14,17 @@ class OutdoorSegment(Base):
     end_y = Column(Float, nullable=False)
     weight = Column(Integer, nullable=False)
 
-    start_building = relationship("Building", foreign_keys=[start_building_id])
-    end_building = relationship("Building", foreign_keys=[end_building_id])
+    start_building = relationship(
+        "Building",
+        foreign_keys=[start_building_id],
+        back_populates="outdoor_segments_start",
+        overlaps="outdoor_segments_start"
+    )
+    end_building = relationship(
+        "Building",
+        foreign_keys=[end_building_id],
+        back_populates="outdoor_segments_end",
+        overlaps="outdoor_segments_end"
+    )
+    connections_from = relationship("Connection", foreign_keys="[Connection.from_outdoor_id]", back_populates="from_outdoor")
+    connections_to = relationship("Connection", foreign_keys="[Connection.to_outdoor_id]", back_populates="to_outdoor")

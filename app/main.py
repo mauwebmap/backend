@@ -101,7 +101,7 @@ async def read_root(request: Request):
 
 
 # Подключаем маршруты
-from app.api.endpoints.map import campus, building, floor, room, segment, connection, outdoor_segment, route
+from app.api.endpoints.map import campus, building, floor, room, segment, connection, outdoor_segment, route, enum
 from app.api.endpoints.users import auth
 
 app.include_router(campus.router)
@@ -113,3 +113,4 @@ app.include_router(connection.router)
 app.include_router(outdoor_segment.router)
 app.include_router(auth.router)
 app.include_router(route.router)
+app.include_router(enum.router)

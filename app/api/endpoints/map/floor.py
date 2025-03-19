@@ -1,26 +1,21 @@
-from fastapi import Depends, Form, UploadFile, File, HTTPException, status
-from sqlalchemy.orm import Session
 from typing import Optional
-from app.database.database import get_db
-from app.map.schemas.floor import FloorResponse
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 from app.map.crud.floor import (
-    get_all_floors,
     get_floor,
-    create_floor,
+    get_all_floors,
+    create_floor_with_connections,
     update_floor,
     delete_floor
 )
+from app.map.schemas.floor import FloorCreate, FloorResponse
+from app.database.database import get_db
 from app.users.dependencies.auth import admin_required
-from app.api.endpoints.base import SecureRouter, ProtectedMethodsRoute
 
-router = SecureRouter(
-    version=2,
-    prefix="/floors",
-    tags=["Floors"],
-    route_class=ProtectedMethodsRoute,
-    default_dependencies=[Depends(admin_required)]
-)
+router = APIRouter(prefix="/floors", tags=["Floors"])
 
+# Получить список всех этажей
 @router.get("/", response_model=list[FloorResponse])
 def read_floors(
     building_id: Optional[int] = None,
@@ -33,6 +28,7 @@ def read_floors(
     """
     return get_all_floors(db, building_id=building_id, skip=skip, limit=limit)
 
+# Получить этаж по ID
 @router.get("/{floor_id}", response_model=FloorResponse)
 def read_floor(
     floor_id: int,
@@ -46,57 +42,49 @@ def read_floor(
         raise HTTPException(status_code=404, detail="Floor not found")
     return floor
 
-@router.post("/", response_model=FloorResponse)
-async def create_floor_endpoint(
-    building_id: int = Form(...),
-    level: int = Form(...),
-    description: Optional[str] = Form(None),
-    svg_file: Optional[UploadFile] = File(None),
+# Создать этаж
+@router.post("/", response_model=FloorResponse, dependencies=[Depends(admin_required)])
+def create_floor_endpoint(
+    floor_data: FloorCreate,
     db: Session = Depends(get_db)
 ):
     """
-    Создать новый этаж в указанном здании.
+    Создать новый этаж с возможными соединениями.
     Требуются права администратора.
     """
     try:
-        return await create_floor(db, building_id, level, description, svg_file)
+        return create_floor_with_connections(db, floor_data)
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при создании этажа: {str(e)}"
+        )
 
-@router.put("/{floor_id}", response_model=FloorResponse)
-async def update_floor_endpoint(
+# Обновить этаж
+@router.put("/{floor_id}", response_model=FloorResponse, dependencies=[Depends(admin_required)])
+def update_floor_endpoint(
     floor_id: int,
-    building_id: Optional[int] = Form(None),
-    level: Optional[int] = Form(None),
-    description: Optional[str] = Form(None),
-    svg_file: Optional[UploadFile] = File(None),
+    floor_data: FloorCreate,
     db: Session = Depends(get_db)
 ):
     """
     Обновить информацию об этаже.
     Требуются права администратора.
     """
-    update_data = {}
-    if building_id is not None:
-        update_data["building_id"] = building_id
-    if level is not None:
-        update_data["level"] = level
-    if description is not None:
-        update_data["description"] = description
-    file_to_process = svg_file if svg_file and svg_file.filename else None
     try:
-        updated_floor = await update_floor(db, floor_id, update_data, file_to_process)
-        if not updated_floor:
-            raise HTTPException(status_code=404, detail="Floor not found")
-        return updated_floor
+        return update_floor(db, floor_id, floor_data)
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при обновлении этажа: {str(e)}"
+        )
 
-@router.delete("/{floor_id}", response_model=FloorResponse)
+# Удалить этаж
+@router.delete("/{floor_id}", response_model=FloorResponse, dependencies=[Depends(admin_required)])
 def delete_floor_endpoint(
     floor_id: int,
     db: Session = Depends(get_db)
@@ -105,7 +93,11 @@ def delete_floor_endpoint(
     Удалить этаж по его ID.
     Требуются права администратора.
     """
-    deleted_floor = delete_floor(db, floor_id)
-    if not deleted_floor:
-        raise HTTPException(status_code=404, detail="Floor not found")
-    return deleted_floor
+    try:
+        return delete_floor(db, floor_id)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER
+        )

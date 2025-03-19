@@ -1,109 +1,95 @@
-import os
 from typing import Optional
+
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from fastapi import UploadFile, HTTPException, status
-from shutil import copyfileobj
-from uuid import uuid4
 from app.map.models.floor import Floor
+from app.map.models.connection import Connection
+from app.map.schemas.floor import FloorCreate
 
-SVG_DIR = "static/svg/floors"
-os.makedirs(SVG_DIR, exist_ok=True)
-
+# Получить этаж по ID
 def get_floor(db: Session, floor_id: int):
     return db.query(Floor).filter(Floor.id == floor_id).first()
 
+# Получить все этажи
 def get_all_floors(db: Session, building_id: Optional[int] = None, skip: int = 0, limit: int = 100):
     query = db.query(Floor)
     if building_id:
         query = query.filter(Floor.building_id == building_id)
     return query.offset(skip).limit(limit).all()
 
-async def save_svg_file(file: UploadFile) -> str:
-    """Сохраняет SVG-файл с уникальным именем."""
-    if not file.filename.lower().endswith(".svg"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only SVG files are allowed"
-        )
-
-    unique_name = f"{uuid4().hex}.svg"
-    file_path = os.path.join(SVG_DIR, unique_name)
-
-    with open(file_path, "wb") as buffer:
-        copyfileobj(file.file, buffer)
-
-    return f"/{SVG_DIR}/{unique_name}"
-
-async def create_floor(db: Session, floor: dict, svg_file: Optional[UploadFile] = None):
+# Создать этаж с соединениями
+def create_floor_with_connections(db: Session, floor_data: FloorCreate):
     try:
-        # Проверяем существование здания
-        building = db.query(Building).filter(Building.id == floor["building_id"]).first()
-        if not building:
-            raise HTTPException(status_code=404, detail="Building not found")
-
-        # Сохраняем SVG, если он есть
-        if svg_file:
-            floor["image_path"] = await save_svg_file(svg_file)
-
-        db_floor = Floor(**floor)
+        # Создаем этаж
+        db_floor = Floor(
+            building_id=floor_data.building_id,
+            floor_number=floor_data.floor_number,
+            image_path=floor_data.image_path,
+            description=floor_data.description
+        )
         db.add(db_floor)
-        db.commit()
-        db.refresh(db_floor)
-        return db_floor
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
-        )
+        db.flush()  # Фиксируем этаж в базе, чтобы получить ID
 
-async def update_floor(db: Session, floor_id: int, floor: dict, svg_file: Optional[UploadFile] = None):
-    try:
-        db_floor = get_floor(db, floor_id)
-        if not db_floor:
-            raise HTTPException(status_code=404, detail="Floor not found")
-
-        # Обновляем данные
-        update_data = {k: v for k, v in floor.items() if v is not None}
-        if svg_file:
-            if db_floor.image_path and os.path.exists(db_floor.image_path[1:]):
-                os.remove(db_floor.image_path[1:])
-            update_data["image_path"] = await save_svg_file(svg_file)
-
-        for key, value in update_data.items():
-            setattr(db_floor, key, value)
+        # Создаем соединения
+        for connection_data in floor_data.connections:
+            db_connection = Connection(
+                from_floor_id=db_floor.id,
+                to_floor_id=connection_data.to_floor_id,
+                type=connection_data.type.value,  # Используем значение Enum
+                weight=connection_data.weight
+            )
+            db.add(db_connection)
 
         db.commit()
         db.refresh(db_floor)
         return db_floor
-    except HTTPException as e:
-        raise e
     except Exception as e:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
+            status_code=500,
+            detail=f"Ошибка при создании этажа и связей: {str(e)}"
         )
 
+# Обновить этаж
+def update_floor(db: Session, floor_id: int, floor_data: FloorCreate):
+    db_floor = get_floor(db, floor_id)
+    if not db_floor:
+        raise HTTPException(status_code=404, detail="Floor not found")
+
+    # Обновляем основные данные этажа
+    db_floor.building_id = floor_data.building_id
+    db_floor.floor_number = floor_data.floor_number
+    db_floor.image_path = floor_data.image_path
+    db_floor.description = floor_data.description
+
+    # Удаляем старые соединения
+    for connection in db_floor.connections_from:
+        db.delete(connection)
+
+    # Создаем новые соединения
+    for connection_data in floor_data.connections:
+        db_connection = Connection(
+            from_floor_id=db_floor.id,
+            to_floor_id=connection_data.to_floor_id,
+            type=connection_data.type.value,
+            weight=connection_data.weight
+        )
+        db.add(db_connection)
+
+    db.commit()
+    db.refresh(db_floor)
+    return db_floor
+
+# Удалить этаж
 def delete_floor(db: Session, floor_id: int):
-    try:
-        db_floor = get_floor(db, floor_id)
-        if not db_floor:
-            raise HTTPException(status_code=404, detail="Floor not found")
+    db_floor = get_floor(db, floor_id)
+    if not db_floor:
+        raise HTTPException(status_code=404, detail="Floor not found")
 
-        if db_floor.image_path and os.path.exists(db_floor.image_path[1:]):
-            os.remove(db_floor.image_path[1:])
+    # Удаляем связанные соединения
+    for connection in db_floor.connections_from:
+        db.delete(connection)
 
-        db.delete(db_floor)
-        db.commit()
-        return db_floor
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
-        )
+    db.delete(db_floor)
+    db.commit()
+    return db_floor
