@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile
 from sqlalchemy.orm import Session
 from app.map.crud.room import (
-    read_room,
+    get_room,
     get_rooms,
     create_room_with_connections,
     update_room_with_connections,
