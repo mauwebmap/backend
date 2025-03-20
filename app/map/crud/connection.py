@@ -7,13 +7,17 @@ from app.map.schemas.connection import ConnectionCreate, ConnectionUpdate
 def validate_connection_data(data: dict):
     """
     Валидация данных для создания или обновления соединения.
-    Хотя бы одно из полей room_id, segment_id, from_floor_id, to_floor_id должно быть заполнено.
+    Хотя бы одно из полей room_id, segment_id, from_floor_id, to_floor_id,
+    from_outdoor_id, to_outdoor_id, from_segment_id, to_segment_id должно быть заполнено.
     """
-    required_fields = ["room_id", "segment_id", "from_floor_id", "to_floor_id"]
+    required_fields = [
+        "room_id", "segment_id", "from_floor_id", "to_floor_id",
+        "from_outdoor_id", "to_outdoor_id", "from_segment_id", "to_segment_id"
+    ]
     if not any(data.get(field) is not None for field in required_fields):
         raise HTTPException(
             status_code=400,
-            detail="At least one of the fields (room_id, segment_id, from_floor_id, to_floor_id) must be provided."
+            detail="At least one of the fields (room_id, segment_id, from_floor_id, to_floor_id, from_outdoor_id, to_outdoor_id, from_segment_id, to_segment_id) must be provided."
         )
 
 
