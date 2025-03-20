@@ -21,6 +21,14 @@ class FloorBase(BaseModel):
 class FloorCreate(FloorBase):
     connections: List[ConnectionCreate] = Field([], description="Список соединений с другими этажами")
 
+# Схема для обновления этажа
+class FloorUpdate(FloorBase):
+    building_id: Optional[int] = Field(None, description="ID здания, к которому относится этаж")
+    floor_number: Optional[int] = Field(None, description="Номер этажа")
+    image_path: Optional[str] = Field(None, description="Путь к изображению этажа")
+    description: Optional[str] = Field(None, description="Описание этажа")
+    connections: Optional[List[ConnectionCreate]] = Field(None, description="Список соединений с другими этажами")
+
 # Схема для ответа
 class FloorResponse(FloorBase):
     id: int = Field(..., description="Уникальный идентификатор этажа")

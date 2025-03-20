@@ -1,10 +1,20 @@
+import os
 from typing import Optional
-
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
 from app.map.models.floor import Floor
 from app.map.models.connection import Connection
 from app.map.schemas.floor import FloorCreate
+import mimetypes
+
+# Директория для SVG-файлов этажей
+SVG_DIR = "static/svg/floors"
+os.makedirs(SVG_DIR, exist_ok=True)
+
+# Проверка, является ли файл SVG
+def is_svg_file(file: UploadFile):
+    mime_type, _ = mimetypes.guess_type(file.filename)
+    return mime_type == "image/svg+xml"
 
 # Получить этаж по ID
 def get_floor(db: Session, floor_id: int):
@@ -18,15 +28,21 @@ def get_all_floors(db: Session, building_id: Optional[int] = None, skip: int = 0
     return query.offset(skip).limit(limit).all()
 
 # Создать этаж с соединениями
-def create_floor_with_connections(db: Session, floor_data: FloorCreate):
+def create_floor_with_connections(db: Session, floor_data: FloorCreate, svg_file: Optional[UploadFile] = None):
     try:
         # Создаем этаж
-        db_floor = Floor(
-            building_id=floor_data.building_id,
-            floor_number=floor_data.floor_number,
-            image_path=floor_data.image_path,
-            description=floor_data.description
-        )
+        floor_dict = floor_data.dict()
+        if svg_file:
+            if not is_svg_file(svg_file):
+                raise HTTPException(status_code=400, detail="Файл должен быть SVG.")
+
+            svg_filename = f"floor_{floor_data.floor_number}_{svg_file.filename}"
+            svg_path = os.path.join(SVG_DIR, svg_filename)
+            with open(svg_path, "wb") as buffer:
+                buffer.write(svg_file.file.read())
+            floor_dict["image_path"] = f"/{svg_path}"
+
+        db_floor = Floor(**floor_dict)
         db.add(db_floor)
         db.flush()  # Фиксируем этаж в базе, чтобы получить ID
 
@@ -45,22 +61,32 @@ def create_floor_with_connections(db: Session, floor_data: FloorCreate):
         return db_floor
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ошибка при создании этажа и связей: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Ошибка при создании этажа и связей: {str(e)}")
 
 # Обновить этаж
-def update_floor(db: Session, floor_id: int, floor_data: FloorCreate):
+def update_floor(db: Session, floor_id: int, floor_data: FloorCreate, svg_file: Optional[UploadFile] = None):
     db_floor = get_floor(db, floor_id)
     if not db_floor:
         raise HTTPException(status_code=404, detail="Floor not found")
 
     # Обновляем основные данные этажа
-    db_floor.building_id = floor_data.building_id
-    db_floor.floor_number = floor_data.floor_number
-    db_floor.image_path = floor_data.image_path
-    db_floor.description = floor_data.description
+    update_data = floor_data.dict(exclude_unset=True)
+    if svg_file:
+        if not is_svg_file(svg_file):
+            raise HTTPException(status_code=400, detail="Файл должен быть SVG.")
+
+        # Удаляем старый файл, если он существует
+        if db_floor.image_path and os.path.exists(db_floor.image_path[1:]):
+            os.remove(db_floor.image_path[1:])
+
+        svg_filename = f"floor_{db_floor.floor_number}_{svg_file.filename}"
+        svg_path = os.path.join(SVG_DIR, svg_filename)
+        with open(svg_path, "wb") as buffer:
+            buffer.write(svg_file.file.read())
+        update_data["image_path"] = f"/{svg_path}"
+
+    for key, value in update_data.items():
+        setattr(db_floor, key, value)
 
     # Удаляем старые соединения
     for connection in db_floor.connections_from:
@@ -89,6 +115,10 @@ def delete_floor(db: Session, floor_id: int):
     # Удаляем связанные соединения
     for connection in db_floor.connections_from:
         db.delete(connection)
+
+    # Удаляем файл SVG
+    if db_floor.image_path and os.path.exists(db_floor.image_path[1:]):
+        os.remove(db_floor.image_path[1:])
 
     db.delete(db_floor)
     db.commit()

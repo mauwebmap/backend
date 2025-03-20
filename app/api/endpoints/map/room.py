@@ -35,7 +35,7 @@ def read_room(room_id: int, db: Session = Depends(get_db)):
 @router.post("/", response_model=RoomResponse, dependencies=[Depends(admin_required)])
 async def create_room_endpoint(
     room_data: RoomCreate,
-    svg_file: Optional[UploadFile] = None,
+    image_file: Optional[UploadFile] = None,  # Файл изображения комнаты
     db: Session = Depends(get_db)
 ):
     """
@@ -43,7 +43,7 @@ async def create_room_endpoint(
     Требуются права администратора.
     """
     try:
-        return await create_room_with_connections(db, room_data, svg_file)
+        return await create_room_with_connections(db, room_data, image_file)
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -56,7 +56,7 @@ async def create_room_endpoint(
 async def update_room_endpoint(
     room_id: int,
     room_data: RoomUpdate,
-    svg_file: Optional[UploadFile] = None,
+    image_file: Optional[UploadFile] = None,  # Файл изображения комнаты
     db: Session = Depends(get_db)
 ):
     """
@@ -64,7 +64,7 @@ async def update_room_endpoint(
     Требуются права администратора.
     """
     try:
-        return await update_room_with_connections(db, room_id, room_data, svg_file)
+        return await update_room_with_connections(db, room_id, room_data, image_file)
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -84,4 +84,7 @@ def delete_room_endpoint(room_id: int, db: Session = Depends(get_db)):
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при удалении комнаты: {str(e)}"
+        )

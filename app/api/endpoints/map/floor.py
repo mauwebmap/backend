@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile
 from sqlalchemy.orm import Session
 from app.map.crud.floor import (
     get_floor,
@@ -9,31 +9,22 @@ from app.map.crud.floor import (
     update_floor,
     delete_floor
 )
-from app.map.schemas.floor import FloorCreate, FloorResponse
+from app.map.schemas.floor import FloorCreate, FloorUpdate, FloorResponse
 from app.database.database import get_db
 from app.users.dependencies.auth import admin_required
 
 router = APIRouter(prefix="/floors", tags=["Floors"])
 
-# Получить список всех этажей
 @router.get("/", response_model=list[FloorResponse])
-def read_floors(
-    building_id: Optional[int] = None,
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db)
-):
+def read_floors(building_id: Optional[int] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     """
-    Получить список всех этажей, опционально отфильтрованных по building_id.
+    Получить список всех этажей.
+    Можно фильтровать по building_id.
     """
     return get_all_floors(db, building_id=building_id, skip=skip, limit=limit)
 
-# Получить этаж по ID
 @router.get("/{floor_id}", response_model=FloorResponse)
-def read_floor(
-    floor_id: int,
-    db: Session = Depends(get_db)
-):
+def read_floor(floor_id: int, db: Session = Depends(get_db)):
     """
     Получить информацию об этаже по его ID.
     """
@@ -42,10 +33,10 @@ def read_floor(
         raise HTTPException(status_code=404, detail="Floor not found")
     return floor
 
-# Создать этаж
 @router.post("/", response_model=FloorResponse, dependencies=[Depends(admin_required)])
 def create_floor_endpoint(
     floor_data: FloorCreate,
+    svg_file: Optional[UploadFile] = None,  # SVG-файл этажа
     db: Session = Depends(get_db)
 ):
     """
@@ -53,7 +44,7 @@ def create_floor_endpoint(
     Требуются права администратора.
     """
     try:
-        return create_floor_with_connections(db, floor_data)
+        return create_floor_with_connections(db, floor_data, svg_file)
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -62,11 +53,11 @@ def create_floor_endpoint(
             detail=f"Ошибка при создании этажа: {str(e)}"
         )
 
-# Обновить этаж
 @router.put("/{floor_id}", response_model=FloorResponse, dependencies=[Depends(admin_required)])
 def update_floor_endpoint(
     floor_id: int,
-    floor_data: FloorCreate,
+    floor_data: FloorUpdate,
+    svg_file: Optional[UploadFile] = None,  # SVG-файл этажа
     db: Session = Depends(get_db)
 ):
     """
@@ -74,7 +65,7 @@ def update_floor_endpoint(
     Требуются права администратора.
     """
     try:
-        return update_floor(db, floor_id, floor_data)
+        return update_floor(db, floor_id, floor_data, svg_file)
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -83,12 +74,8 @@ def update_floor_endpoint(
             detail=f"Ошибка при обновлении этажа: {str(e)}"
         )
 
-# Удалить этаж
 @router.delete("/{floor_id}", response_model=FloorResponse, dependencies=[Depends(admin_required)])
-def delete_floor_endpoint(
-    floor_id: int,
-    db: Session = Depends(get_db)
-):
+def delete_floor_endpoint(floor_id: int, db: Session = Depends(get_db)):
     """
     Удалить этаж по его ID.
     Требуются права администратора.
@@ -99,5 +86,6 @@ def delete_floor_endpoint(
         raise e
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при удалении этажа: {str(e)}"
         )
