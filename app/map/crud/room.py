@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from app.models.enums import ConnectionType  # Импортируем перечисление типов соединений
+from app.map.models.enums import ConnectionType  # Импортируем перечисление типов соединений
 
 # Схема для создания соединений
 class ConnectionCreate(BaseModel):
