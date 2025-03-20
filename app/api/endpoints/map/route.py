@@ -5,8 +5,8 @@ from app.map.utils.graph import Graph
 from app.map.utils.pathfinder import a_star
 from app.map.utils.builder import build_graph, parse_vertex_id
 from app.map.models.floor import Floor
-from app.map.models.floor import Room
-from app.map.models.floor import Segment
+from app.map.models.room import Room
+from app.map.models.segment import Segment
 
 router = APIRouter()
 
