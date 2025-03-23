@@ -1,8 +1,8 @@
 """first
 
-Revision ID: 5fe92a70e201
+Revision ID: 2c0a2a435936
 Revises: 
-Create Date: 2025-03-16 21:02:00.202328
+Create Date: 2025-03-23 22:44:40.784939
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '5fe92a70e201'
+revision: str = '2c0a2a435936'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -43,8 +43,6 @@ def upgrade() -> None:
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('x', sa.Float(), nullable=False),
     sa.Column('y', sa.Float(), nullable=False),
-    sa.Column('x_head', sa.Float(), nullable=False),
-    sa.Column('y_head', sa.Float(), nullable=False),
     sa.Column('description', sa.Text(), nullable=True),
     sa.Column('image_path', sa.String(length=255), nullable=True),
     sa.ForeignKeyConstraint(['campus_id'], ['campuses.id'], ),
@@ -83,6 +81,8 @@ def upgrade() -> None:
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('cab_id', sa.String(length=50), nullable=False),
     sa.Column('coordinates', sa.JSON(), nullable=True),
+    sa.Column('cab_x', sa.Float(), nullable=True),
+    sa.Column('cab_y', sa.Float(), nullable=True),
     sa.Column('description', sa.Text(), nullable=True),
     sa.Column('image_path', sa.String(length=255), nullable=True),
     sa.ForeignKeyConstraint(['building_id'], ['buildings.id'], ),

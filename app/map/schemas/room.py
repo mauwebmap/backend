@@ -25,7 +25,6 @@ class RoomBase(BaseModel):
 # Схема для создания комнаты
 class RoomCreate(RoomBase):
     connections: List[ConnectionCreate] = Field([], description="Список соединений с коридорами")
-    image_path: Optional[str] = Field(None, description="Путь к изображению комнаты")
 
 # Схема для обновления комнаты
 class RoomUpdate(RoomBase):
@@ -36,7 +35,6 @@ class RoomUpdate(RoomBase):
     coordinates: Optional[List[Coordinates]] = Field(None, description="Координаты комнаты")
     description: Optional[str] = Field(None, description="Описание комнаты")
     connections: Optional[List[ConnectionCreate]] = Field(None, description="Список соединений с коридорами")
-    image_path: Optional[str] = Field(None, description="Путь к изображению комнаты")
 
 # Схема для ответа
 class RoomResponse(RoomBase):

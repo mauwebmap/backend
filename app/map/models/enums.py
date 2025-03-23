@@ -5,3 +5,4 @@ class ConnectionType(str, Enum):
     ELEVATOR = "лифт"  #
     SLIDE = "горка"  #
     DOOR = "дверь"  #
+    STREET = "улица"  #

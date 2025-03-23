@@ -33,6 +33,7 @@ async def create_room_with_connections(db: Session, room_data: RoomCreate, image
             if not is_image_file(image_file):
                 raise HTTPException(status_code=400, detail="Файл должен быть изображением (JPEG, PNG).")
 
+            # Генерируем уникальное имя файла
             image_filename = f"room_{room_data.name}_{image_file.filename}"
             image_path = os.path.join(ROOM_IMAGE_DIR, image_filename)
             with open(image_path, "wb") as buffer:
@@ -76,6 +77,7 @@ async def update_room_with_connections(db: Session, room_id: int, room_data: Roo
         if db_room.image_path and os.path.exists(db_room.image_path[1:]):
             os.remove(db_room.image_path[1:])
 
+        # Генерируем уникальное имя файла
         image_filename = f"room_{db_room.name}_{image_file.filename}"
         image_path = os.path.join(ROOM_IMAGE_DIR, image_filename)
         with open(image_path, "wb") as buffer:

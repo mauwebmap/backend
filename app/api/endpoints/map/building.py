@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.database.database import get_db
-from app.map.schemas.building import BuildingResponse
+from app.map.schemas.building import BuildingResponse, BuildingCreate, BuildingUpdate
 from app.map.crud.building import (
     get_all_buildings,
     get_building,
@@ -50,8 +50,6 @@ async def create_building_endpoint(
         name: str = Form(...),
         x: float = Form(..., description="Координата X входа"),
         y: float = Form(..., description="Координата Y входа"),
-        x_head: float = Form(..., description="Координата X центра"),
-        y_head: float = Form(..., description="Координата Y центра"),
         description: Optional[str] = Form(None),
         svg_file: Optional[UploadFile] = File(None),
         db: Session = Depends(get_db)
@@ -65,8 +63,6 @@ async def create_building_endpoint(
         "name": name,
         "x": x,
         "y": y,
-        "x_head": x_head,
-        "y_head": y_head,
         "description": description
     }
 
@@ -86,10 +82,6 @@ async def update_building_endpoint(
         building_id: int,
         campus_id: Optional[int] = Form(None),
         name: Optional[str] = Form(None),
-        x: Optional[float] = Form(None),
-        y: Optional[float] = Form(None),
-        x_head: Optional[float] = Form(None),
-        y_head: Optional[float] = Form(None),
         description: Optional[str] = Form(None),
         svg_file: Optional[UploadFile] = File(None),
         db: Session = Depends(get_db)
@@ -103,14 +95,6 @@ async def update_building_endpoint(
         update_data["campus_id"] = campus_id
     if name is not None:
         update_data["name"] = name
-    if x is not None:
-        update_data["x"] = x
-    if y is not None:
-        update_data["y"] = y
-    if x_head is not None:
-        update_data["x_head"] = x_head
-    if y_head is not None:
-        update_data["y_head"] = y_head
     if description is not None:
         update_data["description"] = description
 

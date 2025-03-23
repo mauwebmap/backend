@@ -9,8 +9,6 @@ class Building(Base):
     name = Column(String(255), nullable=False)
     x = Column(Float, nullable=False)
     y = Column(Float, nullable=False)
-    x_head = Column(Float, nullable=False)
-    y_head = Column(Float, nullable=False)
     description = Column(Text, nullable=True)
     image_path = Column(String(255), nullable=True)
 
