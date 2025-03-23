@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     @property
     def COOKIE_CONFIG(self):
         return {
-            "secure": self.ENV == "prod",
+            "secure": True,  # HTTPS только в prod
             "samesite": "lax",
-            "domain": ".sereosly.ru" if self.ENV == "prod" else None
+            "domain": ".sereosly.ru"  # Общий домен для всех поддоменов
         }
 
     # Строка подключения к БД
