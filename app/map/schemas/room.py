@@ -20,6 +20,8 @@ class RoomBase(BaseModel):
     name: str = Field(..., description="Название комнаты")
     cab_id: str = Field(..., description="Кабинетный номер")
     coordinates: Optional[List[Coordinates]] = Field(None, description="Координаты комнаты")
+    cab_x: Optional[float] = Field(None, description="Координата X входа в кабинет")
+    cab_y: Optional[float] = Field(None, description="Координата Y входа в кабинет")
     description: Optional[str] = Field(None, description="Описание комнаты")
 
 # Схема для создания комнаты
@@ -33,6 +35,8 @@ class RoomUpdate(RoomBase):
     name: Optional[str] = Field(None, description="Название комнаты")
     cab_id: Optional[str] = Field(None, description="Кабинетный номер")
     coordinates: Optional[List[Coordinates]] = Field(None, description="Координаты комнаты")
+    cab_x: Optional[float] = Field(None, description="Координата X входа в кабинет")
+    cab_y: Optional[float] = Field(None, description="Координата Y входа в кабинет")
     description: Optional[str] = Field(None, description="Описание комнаты")
     connections: Optional[List[ConnectionCreate]] = Field(None, description="Список соединений с коридорами")
 

@@ -46,15 +46,14 @@ def set_auth_cookies(response: Response, access: str, refresh: str):
     )
 
 
-async def get_token(request: Request):
+async def get_token(request: Request) -> str | None:
     """Получает access_token из куки или заголовка."""
-    token = request.cookies.get("access_token") or \
-            (request.headers.get("Authorization") or "").replace("Bearer ", "")
-    return token if token else None
+    return request.cookies.get("access_token") or \
+           (request.headers.get("Authorization") or "").replace("Bearer ", "") or None
 
 
-async def refresh_access_token(request: Request, response: Response, db: Session) -> tuple[str, str]:
-    """Обновляет access_token и refresh_token по refresh_token."""
+async def refresh_access_token(request: Request, response: Response, db: Session) -> str:
+    """Обновляет access_token и refresh_token по refresh_token, возвращает новый access_token."""
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Отсутствует refresh_token")
@@ -68,47 +67,37 @@ async def refresh_access_token(request: Request, response: Response, db: Session
         if not admin:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
 
-        # Создаем новые токены
         new_access = create_token({"sub": admin.username, "is_admin": admin.is_admin})
         new_refresh = create_token({"sub": admin.username}, is_refresh=True)
-
-        # Обновляем куки
         set_auth_cookies(response, new_access, new_refresh)
-        return new_access, new_refresh
-
+        return new_access
     except JWTError:
         raise HTTPException(status_code=401, detail="Недействительный refresh_token")
 
 
-async def auth_required(request: Request, response: Response, db: Session = Depends(get_db)):
-    """Проверяет токены и обновляет их при необходимости для всех запросов, кроме GET."""
+async def admin_required(request: Request, response: Response, db: Session = Depends(get_db)):
+    """Проверяет токены и права админа, обновляет токены при необходимости."""
     if request.method == "GET":
-        return None  # GET-запросы не требуют авторизации
+        return  # GET-запросы не требуют авторизации
 
     token = await get_token(request)
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Неверный тип токена")
-        return payload
     except (JWTError, TypeError):  # Если токен отсутствует или истек
-        # Пробуем обновить через refresh_token
-        new_access, _ = await refresh_access_token(request, response, db)
-        return jwt.decode(new_access, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        token = await refresh_access_token(request, response, db)
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
 
-
-async def admin_required(payload: dict = Depends(auth_required)):
-    """Проверяет, что пользователь — админ."""
-    if not payload:
-        return None  # Для GET-запросов
     if not payload.get("is_admin", False):
         raise HTTPException(status_code=403, detail="Требуются права администратора")
-    return payload
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Проверяет пароль."""
     return pwd_context.verify(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
+    """Хеширует пароль."""
     return pwd_context.hash(password)
