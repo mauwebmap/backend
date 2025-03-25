@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from jose import jwt, JWTError
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -35,9 +35,11 @@ async def login(response: Response, credentials: LoginRequest, db: Session = Dep
             detail="Неверные учетные данные"
         )
 
+    # Создаем токены
     access_token = create_token({"sub": admin.username, "is_admin": admin.is_admin})
     refresh_token = create_token({"sub": admin.username}, is_refresh=True)
 
+    # Устанавливаем куки
     set_auth_cookies(response, access_token, refresh_token)
 
     return TokenResponse(
@@ -46,25 +48,3 @@ async def login(response: Response, credentials: LoginRequest, db: Session = Dep
         expires_at=datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE),
         user_data={"username": admin.username, "is_admin": admin.is_admin}
     )
-
-@router.post("/auth/refresh")
-async def refresh_token(request: Request, response: Response, db: Session = Depends(get_db)):
-    refresh_token = request.cookies.get("refresh_token")
-    if not refresh_token:
-        raise HTTPException(status_code=401, detail="Отсутствует refresh token")
-
-    try:
-        payload = jwt.decode(refresh_token, settings.REFRESH_SECRET_KEY, algorithms=[settings.ALGORITHM])
-        if payload.get("type") != "refresh":
-            raise HTTPException(status_code=401, detail="Неверный тип токена")
-
-        admin = db.query(Admin).filter(Admin.username == payload.get("sub")).first()
-        if not admin:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-        new_access = create_token({"sub": admin.username, "is_admin": admin.is_admin})
-        set_auth_cookies(response, new_access, refresh_token)
-
-        return {"access_token": new_access, "token_type": "bearer"}
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Недействительный refresh token")
