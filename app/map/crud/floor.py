@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.map.models.floor import Floor
 from app.map.models.connection import Connection
 from app.map.schemas.floor import FloorCreate
+from app.map.models.building import Building
 import mimetypes
 
 # Директория для SVG-файлов этажей
@@ -26,6 +27,32 @@ def get_all_floors(db: Session, building_id: Optional[int] = None, skip: int = 0
     if building_id:
         query = query.filter(Floor.building_id == building_id)
     return query.offset(skip).limit(limit).all()
+
+def get_unique_floor_numbers_by_campus(db: Session, campus_id: int):
+    """
+    Получить уникальные номера этажей в выбранном кампусе.
+    """
+    floors = (
+        db.query(Floor.floor_number)
+        .join(Building, Building.id == Floor.building_id)
+        .filter(Building.campus_id == campus_id)
+        .distinct()
+        .order_by(Floor.floor_number.asc())
+        .all()
+    )
+    # Преобразуем результат в плоский список
+    return [floor[0] for floor in floors]
+
+def get_floors_by_campus_and_number(db: Session, campus_id: int, floor_number: int):
+    """
+    Получить все этажи с указанным номером, принадлежащие указанному кампусу.
+    """
+    return (
+        db.query(Floor)
+        .join(Building, Building.id == Floor.building_id)
+        .filter(Building.campus_id == campus_id, Floor.floor_number == floor_number)
+        .all()
+    )
 
 # Создать этаж с соединениями
 def create_floor_with_connections(db: Session, floor_data: FloorCreate, svg_file: Optional[UploadFile] = None):

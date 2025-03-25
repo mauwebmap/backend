@@ -6,6 +6,8 @@ from app.map.models.room import Room
 from app.map.models.connection import Connection
 from app.map.schemas.room import RoomCreate, RoomUpdate
 import mimetypes
+from app.map.models.building import Building
+from app.map.models.floor import Floor
 
 # Директория для фотографий комнат
 ROOM_IMAGE_DIR = "static/images/rooms"
@@ -23,6 +25,18 @@ def get_room(db: Session, room_id: int):
 # Получить все комнаты
 def get_rooms(db: Session, skip: int = 0, limit: int = 100):
     return db.query(Room).offset(skip).limit(limit).all()
+
+def get_rooms_by_floor_and_campus(db: Session, floor_id: int, campus_id: int):
+    """
+    Получить все комнаты на указанном этаже, принадлежащем указанному кампусу.
+    """
+    return (
+        db.query(Room)
+        .join(Floor, Floor.id == Room.floor_id)
+        .join(Building, Building.id == Floor.building_id)
+        .filter(Floor.id == floor_id, Building.campus_id == campus_id)
+        .all()
+    )
 
 # Создать комнату с соединениями
 async def create_room_with_connections(db: Session, room_data: RoomCreate, image_file: Optional[UploadFile] = None):

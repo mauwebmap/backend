@@ -36,3 +36,9 @@ class FloorResponse(FloorBase):
 
     class Config:
         from_attributes = True
+
+class FloorNumbersResponse(BaseModel):
+    floor_numbers: List[int] = Field(..., description="Список уникальных номеров этажей в порядке возрастания")
+
+    class Config:
+        from_attributes = True

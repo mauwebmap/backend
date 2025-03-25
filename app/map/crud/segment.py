@@ -3,6 +3,9 @@ from sqlalchemy.orm import Session
 from app.map.models.segment import Segment
 from app.map.models.connection import Connection
 from app.map.schemas.segment import SegmentCreate
+from app.map.models.building import Building
+from app.map.models.floor import Floor
+
 
 # Получить сегмент по ID
 def get_segment(db: Session, segment_id: int):
@@ -12,6 +15,17 @@ def get_segment(db: Session, segment_id: int):
 def get_segments(db: Session, skip: int = 0, limit: int = 100):
     return db.query(Segment).offset(skip).limit(limit).all()
 
+def get_segments_by_floor_and_campus(db: Session, floor_id: int, campus_id: int):
+    """
+    Получить все сегменты на указанном этаже, принадлежащем указанному кампусу.
+    """
+    return (
+        db.query(Segment)
+        .join(Floor, Floor.id == Segment.floor_id)
+        .join(Building, Building.id == Floor.building_id)
+        .filter(Floor.id == floor_id, Building.campus_id == campus_id)
+        .all()
+    )
 # Создать сегмент с соединениями
 def create_segment_with_connections(db: Session, segment_data: SegmentCreate):
     try:
