@@ -10,3 +10,4 @@ class Campus(Base):
     image_path = Column(String(255), nullable=True)
 
     buildings = relationship("Building", back_populates="campus")
+    outdoor_segments = relationship("OutdoorSegment", back_populates="campus")

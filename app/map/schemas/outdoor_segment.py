@@ -3,8 +3,9 @@ from typing import Optional
 
 class OutdoorSegmentBase(BaseModel):
     type: str
-    start_building_id: Optional[int] = None
-    end_building_id: Optional[int] = None
+    campus_id: int
+    start_building_id: Optional[int]
+    end_building_id: Optional[int]
     start_x: float
     start_y: float
     end_x: float
@@ -15,14 +16,15 @@ class OutdoorSegmentCreate(OutdoorSegmentBase):
     pass
 
 class OutdoorSegmentUpdate(BaseModel):
-    type: Optional[str] = None
-    start_building_id: Optional[int] = None
-    end_building_id: Optional[int] = None
-    start_x: Optional[float] = None
-    start_y: Optional[float] = None
-    end_x: Optional[float] = None
-    end_y: Optional[float] = None
-    weight: Optional[int] = None
+    type: Optional[str]
+    campus_id: Optional[int]
+    start_building_id: Optional[int]
+    end_building_id: Optional[int]
+    start_x: Optional[float]
+    start_y: Optional[float]
+    end_x: Optional[float]
+    end_y: Optional[float]
+    weight: Optional[int]
 
 class OutdoorSegment(OutdoorSegmentBase):
     id: int

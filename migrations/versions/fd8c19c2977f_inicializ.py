@@ -1,8 +1,8 @@
-"""first
+"""inicializ
 
-Revision ID: 2c0a2a435936
+Revision ID: fd8c19c2977f
 Revises: 
-Create Date: 2025-03-23 22:44:40.784939
+Create Date: 2025-03-26 23:07:16.755883
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '2c0a2a435936'
+revision: str = 'fd8c19c2977f'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -62,6 +62,7 @@ def upgrade() -> None:
     op.create_table('outdoor_segments',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('type', sa.String(length=50), nullable=False),
+    sa.Column('campus_id', sa.Integer(), nullable=False),
     sa.Column('start_building_id', sa.Integer(), nullable=True),
     sa.Column('end_building_id', sa.Integer(), nullable=True),
     sa.Column('start_x', sa.Float(), nullable=False),
@@ -69,6 +70,7 @@ def upgrade() -> None:
     sa.Column('end_x', sa.Float(), nullable=False),
     sa.Column('end_y', sa.Float(), nullable=False),
     sa.Column('weight', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['campus_id'], ['campuses.id'], ),
     sa.ForeignKeyConstraint(['end_building_id'], ['buildings.id'], ),
     sa.ForeignKeyConstraint(['start_building_id'], ['buildings.id'], ),
     sa.PrimaryKeyConstraint('id')
