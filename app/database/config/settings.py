@@ -24,12 +24,12 @@ class Settings(BaseSettings):
     @property
     def COOKIE_CONFIG(self):
         return {
-            # "secure": True,  # HTTPS True только в prod
-            # "samesite": "lax",
-            # "domain": ".sereosly.ru"  # Общий домен для всех поддоменов
-            "secure": False,
-            "samesite": "None",
-            "domain": None
+            "secure": True,  # HTTPS True только в prod
+            "samesite": "lax",
+            "domain": ".sereosly.ru"  # Общий домен для всех поддоменов
+            # "secure": False,
+            # "samesite": "None",
+            # "domain": None
         }
 
     # Строка подключения к БД
