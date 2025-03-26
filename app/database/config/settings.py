@@ -26,7 +26,7 @@ class Settings(BaseSettings):
         return {
             "secure": False,  # HTTPS True только в prod
             "samesite": "lax",
-            "domain": ".sereosly.ru"  # Общий домен для всех поддоменов
+            # "domain": ".sereosly.ru"  # Общий домен для всех поддоменов
         }
 
     # Строка подключения к БД
