@@ -23,7 +23,7 @@ jobs:
     - name: Deploy to server
       run: |
         ssh -i ~/.ssh/deploy_key backenduser@sereosly.ru << 'EOF'
-          cd cd /home/backenduser/backend
+          cd /home/backenduser/backend
           git pull origin main
-          systemctl restart backendmap.service
+          sudo systemctl restart backendmap.service
         EOF
