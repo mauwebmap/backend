@@ -56,7 +56,8 @@ def get_floors_by_campus_and_number(db: Session, campus_id: int, floor_number: i
 
 # Создать этаж с соединениями
 async def create_floor_with_connections(db: Session, floor_data: FloorCreate, svg_file: Optional[UploadFile] = None):
-    floor_dict = floor_data.dict()
+    # Исключаем connections из словаря, так как это не поле модели Floor
+    floor_dict = floor_data.dict(exclude={"connections"})
     if svg_file:
         if not is_svg_file(svg_file):
             raise HTTPException(status_code=400, detail="Файл должен быть SVG.")
@@ -64,7 +65,7 @@ async def create_floor_with_connections(db: Session, floor_data: FloorCreate, sv
         svg_path = os.path.join(SVG_DIR, svg_filename)
         os.makedirs(SVG_DIR, exist_ok=True)
         with open(svg_path, "wb") as buffer:
-            content = svg_file.file.read()  # Убрали await
+            content = svg_file.file.read()  # Без await, как мы решили ранее
             if not content:
                 raise HTTPException(status_code=400, detail="SVG файл пустой")
             buffer.write(content)
