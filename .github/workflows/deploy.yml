@@ -1,0 +1,24 @@
+name: Deploy FastAPI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Deploy to server
+      run: |
+        ssh -i <(echo "${{ secrets.campuskey }}") -o StrictHostKeyChecking=no backenduser@sereosly.ru << 'EOF'
+          cd /home/backenduser/backend
+          git pull origin main
+          source venv/bin/activate
+          pip install -r requirements.txt
+          systemctl restart backendmap.service
+        EOF
