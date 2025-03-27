@@ -56,38 +56,36 @@ def get_floors_by_campus_and_number(db: Session, campus_id: int, floor_number: i
 
 # Создать этаж с соединениями
 async def create_floor_with_connections(db: Session, floor_data: FloorCreate, svg_file: Optional[UploadFile] = None):
-    try:
-        floor_dict = floor_data.dict()
-        if svg_file:
-            if not is_svg_file(svg_file):
-                raise HTTPException(status_code=400, detail="Файл должен быть SVG.")
-            svg_filename = f"floor_{floor_data.floor_number}_{svg_file.filename}"
-            svg_path = os.path.join(SVG_DIR, svg_filename)
-            os.makedirs(SVG_DIR, exist_ok=True)  # Убеждаемся, что директория существует
-            with open(svg_path, "wb") as buffer:
-                content = await svg_file.file.read()
-                buffer.write(content)
-            floor_dict["image_path"] = f"/{svg_path}"
+    floor_dict = floor_data.dict()
+    if svg_file:
+        if not is_svg_file(svg_file):
+            raise HTTPException(status_code=400, detail="Файл должен быть SVG.")
+        svg_filename = f"floor_{floor_data.floor_number}_{svg_file.filename}"
+        svg_path = os.path.join(SVG_DIR, svg_filename)
+        os.makedirs(SVG_DIR, exist_ok=True)
+        with open(svg_path, "wb") as buffer:
+            content = svg_file.file.read()  # Убрали await
+            if not content:
+                raise HTTPException(status_code=400, detail="SVG файл пустой")
+            buffer.write(content)
+        floor_dict["image_path"] = f"/{svg_path}"
 
-        db_floor = Floor(**floor_dict)
-        db.add(db_floor)
-        db.flush()
+    db_floor = Floor(**floor_dict)
+    db.add(db_floor)
+    db.flush()
 
-        for connection_data in floor_data.connections:
-            db_connection = Connection(
-                from_floor_id=db_floor.id,
-                to_floor_id=connection_data.to_floor_id,
-                type=connection_data.type.value,
-                weight=connection_data.weight
-            )
-            db.add(db_connection)
+    for connection_data in floor_data.connections:
+        db_connection = Connection(
+            from_floor_id=db_floor.id,
+            to_floor_id=connection_data.to_floor_id,
+            type=connection_data.type.value,
+            weight=connection_data.weight
+        )
+        db.add(db_connection)
 
-        db.commit()
-        db.refresh(db_floor)
-        return db_floor
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ошибка при создании этажа и связей: {str(e)}")
+    db.commit()
+    db.refresh(db_floor)
+    return db_floor
 
 # Обновить этаж
 def update_floor(db: Session, floor_id: int, floor_data: FloorUpdate, svg_file: Optional[UploadFile] = None):

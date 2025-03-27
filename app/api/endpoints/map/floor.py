@@ -1,15 +1,3 @@
-import logging
-
-# Настройка логирования
-logging.basicConfig(
-    level=logging.DEBUG,  # Уровень логирования (DEBUG включает все сообщения)
-    filename="app.log",   # Имя файла для записи логов
-    filemode="a",         # Режим "a" — добавлять в конец файла (не перезаписывать)
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # Формат записи
-)
-logger = logging.getLogger(__name__)  # Логгер для текущего модуля
-
-
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, Form, File, Request, Response
 from sqlalchemy.orm import Session
@@ -87,7 +75,6 @@ async def create_floor_endpoint(
     svg_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
-    logger.debug(f"Received: building_id={building_id}, floor_number={floor_number}, description={description}, svg_file={svg_file.filename if svg_file else None}")
     try:
         floor_data = FloorCreate(
             building_id=building_id,
@@ -95,15 +82,11 @@ async def create_floor_endpoint(
             description=description,
             connections=[]
         )
-        logger.debug(f"Floor data: {floor_data.dict()}")
         result = await create_floor_with_connections(db=db, floor_data=floor_data, svg_file=svg_file)
-        logger.debug(f"Created floor: {result.id}")
         return result
     except HTTPException as e:
-        logger.error(f"HTTP Exception: {str(e)}")
         raise e
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ошибка при создании этажа: {str(e)}")
 
 # Остальные эндпоинты остаются без изменений, если не нужно логирование в них
