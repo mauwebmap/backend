@@ -10,7 +10,7 @@ from app.map.crud.floor import (
     get_unique_floor_numbers_by_campus,
     get_floors_by_campus_and_number
 )
-from app.map.schemas.floor import FloorResponse, FloorNumbersResponse
+from app.map.schemas.floor import FloorResponse, FloorNumbersResponse, FloorCreate, FloorUpdate
 from app.database.database import get_db
 from app.users.dependencies.auth import admin_required
 
@@ -69,26 +69,25 @@ def read_floors_by_campus_and_number(
 async def create_floor_endpoint(
     request: Request,
     response: Response,
-    building_id: int = Form(..., description="ID здания, к которому относится этаж"),
-    floor_number: int = Form(..., description="Номер этажа"),
-    description: Optional[str] = Form(None, description="Описание этажа"),
-    svg_file: Optional[UploadFile] = File(None, description="SVG-файл этажа"),
+    building_id: int = Form(...),
+    floor_number: int = Form(...),
+    description: Optional[str] = Form(None),
+    svg_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
-    """Создать новый этаж. Требуются права администратора."""
     try:
-        floor_data = {
-            "building_id": building_id,
-            "floor_number": floor_number,
-            "description": description,
-            "connections": []
-        }
-        return await create_floor_with_connections(db=db, floor_data=floor_data, svg_file=svg_file)
+        floor_data = FloorCreate(
+            building_id=building_id,
+            floor_number=floor_number,
+            description=description,
+            connections=[]
+        )
+        result = await create_floor_with_connections(db=db, floor_data=floor_data, svg_file=svg_file)
+        return result
     except HTTPException as e:
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при создании этажа: {str(e)}")
-
 
 @router.put("/{floor_id}", response_model=FloorResponse, dependencies=[Depends(admin_required)])
 async def update_floor_endpoint(
@@ -103,13 +102,13 @@ async def update_floor_endpoint(
 ):
     """Обновить информацию об этаже. Требуются права администратора."""
     try:
-        update_data = {
-            key: value for key, value in {
-                "building_id": building_id,
-                "floor_number": floor_number,
-                "description": description
-            }.items() if value is not None
-        }
+        # Создаём объект FloorUpdate с переданными данными
+        update_data = FloorUpdate(
+            building_id=building_id,
+            floor_number=floor_number,
+            description=description,
+            # connections не передаём через Form, оставляем None
+        )
         updated_floor = update_floor(db=db, floor_id=floor_id, floor_data=update_data, svg_file=svg_file)
         if not updated_floor:
             raise HTTPException(status_code=404, detail="Floor not found")
@@ -118,7 +117,6 @@ async def update_floor_endpoint(
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при обновлении этажа: {str(e)}")
-
 
 @router.delete("/{floor_id}", response_model=FloorResponse, dependencies=[Depends(admin_required)])
 def delete_floor_endpoint(

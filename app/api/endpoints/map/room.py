@@ -10,7 +10,7 @@ from app.map.crud.room import (
     get_rooms_by_floor_and_campus
 )
 from app.map.crud.connection import create_connection
-from app.map.schemas.room import RoomResponse
+from app.map.schemas.room import RoomResponse, RoomCreate, RoomUpdate
 from app.map.schemas.connection import ConnectionCreate
 from app.database.database import get_db
 from app.users.dependencies.auth import admin_required
@@ -61,41 +61,28 @@ async def create_room_endpoint(
     cab_x: Optional[float] = Form(None, description="Координата X входа в кабинет"),
     cab_y: Optional[float] = Form(None, description="Координата Y входа в кабинет"),
     description: Optional[str] = Form(None, description="Описание комнаты"),
-    connections: Optional[str] = Form(None, description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int, ...}])"),
+    connections: Optional[str] = Form(None, description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
     image_file: Optional[UploadFile] = File(None, description="Изображение комнаты"),
     db: Session = Depends(get_db)
 ):
     """Создать новую комнату и опционально связать её с другими объектами. Требуются права администратора."""
     try:
-        # Формируем данные комнаты
-        room_data = {
-            "building_id": building_id,
-            "floor_id": floor_id,
-            "name": name,
-            "cab_id": cab_id,
-            "cab_x": cab_x,
-            "cab_y": cab_y,
-            "description": description
-        }
-
-        # Создаем комнату
+        # Формируем объект RoomCreate
+        room_data = RoomCreate(
+            building_id=building_id,
+            floor_id=floor_id,
+            name=name,
+            cab_id=cab_id,
+            cab_x=cab_x,
+            cab_y=cab_y,
+            description=description,
+            connections=[ConnectionCreate(**conn) for conn in json.loads(connections)] if connections else []
+        )
+        # Создаём комнату
         room = await create_room(db=db, room_data=room_data, image_file=image_file)
-
-        # Если переданы соединения, создаем их
-        if connections:
-            try:
-                connection_list = json.loads(connections)
-                for conn in connection_list:
-                    # Добавляем room_id к каждому соединению
-                    conn["room_id"] = room.id
-                    create_connection(db, ConnectionCreate(**conn))
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                raise HTTPException(status_code=400, detail=f"Неверный формат соединений: {str(e)}")
-
-        db.refresh(room)
         return room
+    except ValueError as e:  # Ошибка валидации JSON или Pydantic
+        raise HTTPException(status_code=400, detail=f"Неверный формат данных: {str(e)}")
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -114,26 +101,29 @@ async def update_room_endpoint(
     cab_x: Optional[float] = Form(None, description="Новая координата X входа"),
     cab_y: Optional[float] = Form(None, description="Новая координата Y входа"),
     description: Optional[str] = Form(None, description="Новое описание комнаты"),
+    connections: Optional[str] = Form(None, description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
     image_file: Optional[UploadFile] = File(None, description="Новое изображение комнаты"),
     db: Session = Depends(get_db)
 ):
     """Обновить информацию о комнате. Требуются права администратора."""
     try:
-        update_data = {
-            key: value for key, value in {
-                "building_id": building_id,
-                "floor_id": floor_id,
-                "name": name,
-                "cab_id": cab_id,
-                "cab_x": cab_x,
-                "cab_y": cab_y,
-                "description": description
-            }.items() if value is not None
-        }
+        # Формируем объект RoomUpdate
+        update_data = RoomUpdate(
+            building_id=building_id,
+            floor_id=floor_id,
+            name=name,
+            cab_id=cab_id,
+            cab_x=cab_x,
+            cab_y=cab_y,
+            description=description,
+            connections=[ConnectionCreate(**conn) for conn in json.loads(connections)] if connections else None
+        )
         updated_room = await update_room(db=db, room_id=room_id, room_data=update_data, image_file=image_file)
         if not updated_room:
             raise HTTPException(status_code=404, detail="Room not found")
         return updated_room
+    except ValueError as e:  # Ошибка валидации JSON или Pydantic
+        raise HTTPException(status_code=400, detail=f"Неверный формат данных: {str(e)}")
     except HTTPException as e:
         raise e
     except Exception as e:

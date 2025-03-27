@@ -4,7 +4,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
 from app.map.models.floor import Floor
 from app.map.models.connection import Connection
-from app.map.schemas.floor import FloorCreate
+from app.map.schemas.floor import FloorCreate, FloorUpdate
 from app.map.models.building import Building
 import mimetypes
 
@@ -55,30 +55,29 @@ def get_floors_by_campus_and_number(db: Session, campus_id: int, floor_number: i
     )
 
 # Создать этаж с соединениями
-def create_floor_with_connections(db: Session, floor_data: FloorCreate, svg_file: Optional[UploadFile] = None):
+async def create_floor_with_connections(db: Session, floor_data: FloorCreate, svg_file: Optional[UploadFile] = None):
     try:
-        # Создаем этаж
         floor_dict = floor_data.dict()
         if svg_file:
             if not is_svg_file(svg_file):
                 raise HTTPException(status_code=400, detail="Файл должен быть SVG.")
-
             svg_filename = f"floor_{floor_data.floor_number}_{svg_file.filename}"
             svg_path = os.path.join(SVG_DIR, svg_filename)
+            os.makedirs(SVG_DIR, exist_ok=True)  # Убеждаемся, что директория существует
             with open(svg_path, "wb") as buffer:
-                buffer.write(svg_file.file.read())
+                content = await svg_file.file.read()
+                buffer.write(content)
             floor_dict["image_path"] = f"/{svg_path}"
 
         db_floor = Floor(**floor_dict)
         db.add(db_floor)
-        db.flush()  # Фиксируем этаж в базе, чтобы получить ID
+        db.flush()
 
-        # Создаем соединения
         for connection_data in floor_data.connections:
             db_connection = Connection(
                 from_floor_id=db_floor.id,
                 to_floor_id=connection_data.to_floor_id,
-                type=connection_data.type.value,  # Используем значение Enum
+                type=connection_data.type.value,
                 weight=connection_data.weight
             )
             db.add(db_connection)
@@ -91,12 +90,12 @@ def create_floor_with_connections(db: Session, floor_data: FloorCreate, svg_file
         raise HTTPException(status_code=500, detail=f"Ошибка при создании этажа и связей: {str(e)}")
 
 # Обновить этаж
-def update_floor(db: Session, floor_id: int, floor_data: FloorCreate, svg_file: Optional[UploadFile] = None):
+def update_floor(db: Session, floor_id: int, floor_data: FloorUpdate, svg_file: Optional[UploadFile] = None):
     db_floor = get_floor(db, floor_id)
     if not db_floor:
         raise HTTPException(status_code=404, detail="Floor not found")
 
-    # Обновляем основные данные этажа
+    # Преобразуем FloorUpdate в словарь, исключая неустановленные поля
     update_data = floor_data.dict(exclude_unset=True)
     if svg_file:
         if not is_svg_file(svg_file):
@@ -112,22 +111,25 @@ def update_floor(db: Session, floor_id: int, floor_data: FloorCreate, svg_file: 
             buffer.write(svg_file.file.read())
         update_data["image_path"] = f"/{svg_path}"
 
+    # Обновляем только переданные поля
     for key, value in update_data.items():
         setattr(db_floor, key, value)
 
-    # Удаляем старые соединения
-    for connection in db_floor.connections_from:
-        db.delete(connection)
+    # Обновляем connections, только если они переданы
+    if floor_data.connections is not None:  # Проверяем, переданы ли связи
+        # Удаляем старые соединения
+        for connection in db_floor.connections_from:
+            db.delete(connection)
 
-    # Создаем новые соединения
-    for connection_data in floor_data.connections:
-        db_connection = Connection(
-            from_floor_id=db_floor.id,
-            to_floor_id=connection_data.to_floor_id,
-            type=connection_data.type.value,
-            weight=connection_data.weight
-        )
-        db.add(db_connection)
+        # Создаём новые соединения
+        for connection_data in floor_data.connections:
+            db_connection = Connection(
+                from_floor_id=db_floor.id,
+                to_floor_id=connection_data.to_floor_id,
+                type=connection_data.type.value,
+                weight=connection_data.weight
+            )
+            db.add(db_connection)
 
     db.commit()
     db.refresh(db_floor)
