@@ -15,7 +15,7 @@ jobs:
 
     - name: Deploy to server
       run: |
-        ssh -i <(echo "${{ secrets.campuskey }}") -o StrictHostKeyChecking=no backenduser@sereosly.ru << 'EOF'
+        ssh -i <(echo "${{ secrets.CAMPUSKEY }}") -o StrictHostKeyChecking=no backenduser@sereosly.ru << 'EOF'
           cd /home/backenduser/backend
           git pull origin main
           source venv/bin/activate
