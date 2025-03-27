@@ -23,7 +23,7 @@ jobs:
     - name: Deploy to server
       run: |
         ssh -i ~/.ssh/deploy_key backenduser@sereosly.ru << 'EOF'
-          cd /backend
+          cd cd /home/backenduser/backend
           git pull origin main
           source venv/bin/activate
           pip install -r requirements.txt
