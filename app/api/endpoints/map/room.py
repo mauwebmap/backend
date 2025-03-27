@@ -10,7 +10,7 @@ from app.map.crud.room import (
     get_rooms_by_floor_and_campus
 )
 from app.map.crud.connection import create_connection
-from app.map.schemas.room import RoomResponse, RoomCreate, RoomUpdate
+from app.map.schemas.room import RoomResponse, RoomCreate, RoomUpdate, Coordinates
 from app.map.schemas.connection import ConnectionCreate
 from app.database.database import get_db
 from app.users.dependencies.auth import admin_required
@@ -50,23 +50,30 @@ def read_rooms_by_floor_and_campus(
         raise HTTPException(status_code=404, detail="No rooms found for the given floor and campus")
     return rooms
 
+
 @router.post("/", response_model=RoomResponse, dependencies=[Depends(admin_required)])
 async def create_room_endpoint(
-    request: Request,
-    response: Response,
-    building_id: int = Form(..., description="ID здания, к которому относится комната"),
-    floor_id: int = Form(..., description="ID этажа, к которому относится комната"),
-    name: str = Form(..., description="Название комнаты"),
-    cab_id: str = Form(..., description="Кабинетный номер"),
-    cab_x: Optional[float] = Form(None, description="Координата X входа в кабинет"),
-    cab_y: Optional[float] = Form(None, description="Координата Y входа в кабинет"),
-    description: Optional[str] = Form(None, description="Описание комнаты"),
-    connections: Optional[str] = Form(None, description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
-    image_file: Optional[UploadFile] = File(None, description="Изображение комнаты"),
-    db: Session = Depends(get_db)
+        request: Request,
+        response: Response,
+        building_id: int = Form(..., description="ID здания, к которому относится комната"),
+        floor_id: int = Form(..., description="ID этажа, к которому относится комната"),
+        name: str = Form(..., description="Название комнаты"),
+        cab_id: str = Form(..., description="Кабинетный номер"),
+        cab_x: Optional[float] = Form(None, description="Координата X входа в кабинет"),
+        cab_y: Optional[float] = Form(None, description="Координата Y входа в кабинет"),
+        description: Optional[str] = Form(None, description="Описание комнаты"),
+        coordinates: Optional[str] = Form(None,
+                                          description="Координаты комнаты (JSON-строка, [{'x': float, 'y': float}]"),
+        connections: Optional[str] = Form(None,
+                                          description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
+        image_file: Optional[UploadFile] = File(None, description="Изображение комнаты"),
+        db: Session = Depends(get_db)
 ):
     """Создать новую комнату и опционально связать её с другими объектами. Требуются права администратора."""
     try:
+        # Парсим coordinates из JSON-строки
+        coordinates_list = [Coordinates(**coord) for coord in json.loads(coordinates)] if coordinates else None
+
         # Формируем объект RoomCreate
         room_data = RoomCreate(
             building_id=building_id,
@@ -76,6 +83,7 @@ async def create_room_endpoint(
             cab_x=cab_x,
             cab_y=cab_y,
             description=description,
+            coordinates=coordinates_list,
             connections=[ConnectionCreate(**conn) for conn in json.loads(connections)] if connections else []
         )
         # Создаём комнату
@@ -89,25 +97,29 @@ async def create_room_endpoint(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Ошибка при создании комнаты: {str(e)}")
 
+
 @router.put("/{room_id}", response_model=RoomResponse, dependencies=[Depends(admin_required)])
 async def update_room_endpoint(
-    room_id: int,
-    request: Request,
-    response: Response,
-    building_id: Optional[int] = Form(None, description="Новый ID здания"),
-    floor_id: Optional[int] = Form(None, description="Новый ID этажа"),
-    name: Optional[str] = Form(None, description="Новое название комнаты"),
-    cab_id: Optional[str] = Form(None, description="Новый кабинетный номер"),
-    cab_x: Optional[float] = Form(None, description="Новая координата X входа"),
-    cab_y: Optional[float] = Form(None, description="Новая координата Y входа"),
-    description: Optional[str] = Form(None, description="Новое описание комнаты"),
-    connections: Optional[str] = Form(None, description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
-    image_file: Optional[UploadFile] = File(None, description="Новое изображение комнаты"),
-    db: Session = Depends(get_db)
+        room_id: int,
+        request: Request,
+        response: Response,
+        building_id: Optional[int] = Form(None, description="Новый ID здания"),
+        floor_id: Optional[int] = Form(None, description="Новый ID этажа"),
+        name: Optional[str] = Form(None, description="Новое название комнаты"),
+        cab_id: Optional[str] = Form(None, description="Новый кабинетный номер"),
+        cab_x: Optional[float] = Form(None, description="Новая координата X входа"),
+        cab_y: Optional[float] = Form(None, description="Новая координата Y входа"),
+        description: Optional[str] = Form(None, description="Новое описание комнаты"),
+        coordinates: Optional[str] = Form(None,
+                                          description="Координаты комнаты (JSON-строка, [{'x': float, 'y': float}]"),
+        connections: Optional[str] = Form(None,
+                                          description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
+        image_file: Optional[UploadFile] = File(None, description="Новое изображение комнаты"),
+        db: Session = Depends(get_db)
 ):
     """Обновить информацию о комнате. Требуются права администратора."""
     try:
-        # Формируем объект RoomUpdate
+        coordinates_list = [Coordinates(**coord) for coord in json.loads(coordinates)] if coordinates else None
         update_data = RoomUpdate(
             building_id=building_id,
             floor_id=floor_id,
@@ -116,6 +128,7 @@ async def update_room_endpoint(
             cab_x=cab_x,
             cab_y=cab_y,
             description=description,
+            coordinates=coordinates_list,
             connections=[ConnectionCreate(**conn) for conn in json.loads(connections)] if connections else None
         )
         updated_room = await update_room(db=db, room_id=room_id, room_data=update_data, image_file=image_file)

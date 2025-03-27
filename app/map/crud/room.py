@@ -31,84 +31,97 @@ def get_rooms_by_floor_and_campus(db: Session, floor_id: int, campus_id: int):
         .all()
     )
 
+
 async def create_room(db: Session, room_data: RoomCreate, image_file: Optional[UploadFile] = None):
-    try:
-        # Преобразуем RoomCreate в словарь
-        room_dict = room_data.dict(exclude={"connections"})  # Исключаем connections из основных данных
-        if image_file:
-            if not is_image_file(image_file):
-                raise HTTPException(status_code=400, detail="Файл должен быть изображением (JPEG, PNG)")
-            image_filename = f"room_{room_data.name}_{image_file.filename}"
-            image_path = os.path.join(ROOM_IMAGE_DIR, image_filename)
-            with open(image_path, "wb") as buffer:
-                buffer.write(await image_file.read())
-            room_dict["image_path"] = f"/{image_path}"
+    # Исключаем connections из словаря, так как это не поле модели Room
+    room_dict = room_data.dict(exclude={"connections"})
 
-        db_room = Room(**room_dict)
-        db.add(db_room)
-        db.flush()  # Фиксируем комнату, чтобы получить ID
+    # Обрабатываем coordinates (они уже в формате List[Coordinates], преобразуем в JSON для хранения)
+    if room_data.coordinates:
+        room_dict["coordinates"] = [coord.dict() for coord in room_data.coordinates]
 
-        # Создаём соединения
+    # Обрабатываем image_file
+    if image_file:
+        if not is_image_file(image_file):
+            raise HTTPException(status_code=400, detail="Файл должен быть изображением.")
+        image_filename = f"room_{room_data.cab_id}_{image_file.filename}"
+        image_path = os.path.join(ROOM_IMAGE_DIR, image_filename)
+        os.makedirs(ROOM_IMAGE_DIR, exist_ok=True)
+        with open(image_path, "wb") as buffer:
+            content = image_file.file.read()  # Без await, как мы решили ранее
+            if not content:
+                raise HTTPException(status_code=400, detail="Файл изображения пустой")
+            buffer.write(content)
+        room_dict["image_path"] = f"/{image_path}"
+
+    # Создаём комнату
+    db_room = Room(**room_dict)
+    db.add(db_room)
+    db.flush()
+
+    # Обрабатываем connections
+    for connection_data in room_data.connections:
+        db_connection = Connection(
+            room_id=db_room.id,
+            segment_id=connection_data.segment_id,
+            type=connection_data.type.value,
+            weight=connection_data.weight
+        )
+        db.add(db_connection)
+
+    db.commit()
+    db.refresh(db_room)
+    return db_room
+
+
+async def update_room(db: Session, room_id: int, room_data: RoomUpdate, image_file: Optional[UploadFile] = None):
+    db_room = db.query(Room).filter(Room.id == room_id).first()
+    if not db_room:
+        return None
+
+    # Обновляем поля комнаты
+    update_data = room_data.dict(exclude_unset=True, exclude={"connections"})
+
+    # Обрабатываем coordinates
+    if room_data.coordinates is not None:
+        update_data["coordinates"] = [coord.dict() for coord in
+                                      room_data.coordinates] if room_data.coordinates else None
+
+    # Обрабатываем image_file
+    if image_file:
+        if not is_image_file(image_file):
+            raise HTTPException(status_code=400, detail="Файл должен быть изображением.")
+        image_filename = f"room_{db_room.cab_id}_{image_file.filename}"
+        image_path = os.path.join(ROOM_IMAGE_DIR, image_filename)
+        os.makedirs(ROOM_IMAGE_DIR, exist_ok=True)
+        with open(image_path, "wb") as buffer:
+            content = image_file.file.read()  # Без await
+            if not content:
+                raise HTTPException(status_code=400, detail="Файл изображения пустой")
+            buffer.write(content)
+        update_data["image_path"] = f"/{image_path}"
+
+    # Применяем обновления
+    for key, value in update_data.items():
+        setattr(db_room, key, value)
+
+    # Обрабатываем connections (удаляем старые и добавляем новые)
+    if room_data.connections is not None:
+        # Удаляем существующие связи
+        db.query(Connection).filter(Connection.room_id == room_id).delete()
+        # Добавляем новые связи
         for connection_data in room_data.connections:
             db_connection = Connection(
-                from_room_id=db_room.id,
-                to_segment_id=connection_data.segment_id,
+                room_id=db_room.id,
+                segment_id=connection_data.segment_id,
                 type=connection_data.type.value,
                 weight=connection_data.weight
             )
             db.add(db_connection)
 
-        db.commit()
-        db.refresh(db_room)
-        return db_room
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ошибка при создании комнаты: {str(e)}")
-
-async def update_room(db: Session, room_id: int, room_data: RoomUpdate, image_file: Optional[UploadFile] = None):
-    db_room = get_room(db, room_id)
-    if not db_room:
-        raise HTTPException(status_code=404, detail="Room not found")
-
-    try:
-        # Преобразуем RoomUpdate в словарь, исключая неустановленные поля
-        update_data = room_data.dict(exclude_unset=True, exclude={"connections"})
-        if image_file:
-            if not is_image_file(image_file):
-                raise HTTPException(status_code=400, detail="Файл должен быть изображением (JPEG, PNG)")
-            if db_room.image_path and os.path.exists(db_room.image_path[1:]):
-                os.remove(db_room.image_path[1:])
-            image_filename = f"room_{db_room.name}_{image_file.filename}"
-            image_path = os.path.join(ROOM_IMAGE_DIR, image_filename)
-            with open(image_path, "wb") as buffer:
-                buffer.write(await image_file.read())
-            update_data["image_path"] = f"/{image_path}"
-
-        # Обновляем поля комнаты
-        for key, value in update_data.items():
-            setattr(db_room, key, value)
-
-        # Обновляем соединения, если переданы
-        if room_data.connections is not None:
-            # Удаляем старые соединения
-            for conn in db_room.connections_from:
-                db.delete(conn)
-            # Создаём новые соединения
-            for connection_data in room_data.connections:
-                db_connection = Connection(
-                    from_room_id=db_room.id,
-                    to_segment_id=connection_data.segment_id,
-                    type=connection_data.type.value,
-                    weight=connection_data.weight
-                )
-                db.add(db_connection)
-
-        db.commit()
-        db.refresh(db_room)
-        return db_room
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ошибка при обновлении комнаты: {str(e)}")
+    db.commit()
+    db.refresh(db_room)
+    return db_room
 
 def delete_room(db: Session, room_id: int):
     db_room = get_room(db, room_id)
