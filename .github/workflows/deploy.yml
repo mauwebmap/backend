@@ -13,10 +13,17 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v4
 
+    - name: Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.CAMPUSKEY }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H sereosly.ru >> ~/.ssh/known_hosts
+
     - name: Deploy to server
       run: |
-        ssh -i <(echo "${{ secrets.CAMPUSKEY }}") -o StrictHostKeyChecking=no backenduser@sereosly.ru << 'EOF'
-          cd /home/backenduser/backend
+        ssh -i ~/.ssh/deploy_key backenduser@sereosly.ru << 'EOF'
+          cd /backend
           git pull origin main
           source venv/bin/activate
           pip install -r requirements.txt
