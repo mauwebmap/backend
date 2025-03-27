@@ -25,7 +25,5 @@ jobs:
         ssh -i ~/.ssh/deploy_key backenduser@sereosly.ru << 'EOF'
           cd cd /home/backenduser/backend
           git pull origin main
-          source venv/bin/activate
-          pip install -r requirements.txt
           systemctl restart backendmap.service
         EOF
