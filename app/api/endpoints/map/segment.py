@@ -8,7 +8,7 @@ from app.map.crud.segment import (
     delete_segment,
     get_segments_by_floor_and_campus
 )
-from app.map.schemas.segment import SegmentCreate, SegmentResponse
+from app.map.schemas.segment import SegmentCreate, Segment as SegmentResponse
 from app.database.database import get_db
 from app.users.dependencies.auth import admin_required
 import json
