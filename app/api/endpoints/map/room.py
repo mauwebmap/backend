@@ -50,24 +50,22 @@ def read_rooms_by_floor_and_campus(
         raise HTTPException(status_code=404, detail="No rooms found for the given floor and campus")
     return rooms
 
-
-@router.post("/", response_model=RoomResponse, dependencies=[Depends(admin_required)])
+@router.post("/", response_model=RoomResponse)
 async def create_room_endpoint(
-        request: Request,
-        response: Response,
-        building_id: int = Form(..., description="ID здания, к которому относится комната"),
-        floor_id: int = Form(..., description="ID этажа, к которому относится комната"),
-        name: str = Form(..., description="Название комнаты"),
-        cab_id: str = Form(..., description="Кабинетный номер"),
-        cab_x: Optional[float] = Form(None, description="Координата X входа в кабинет"),
-        cab_y: Optional[float] = Form(None, description="Координата Y входа в кабинет"),
-        description: Optional[str] = Form(None, description="Описание комнаты"),
-        coordinates: Optional[str] = Form(None,
-                                          description="Координаты комнаты (JSON-строка, [{'x': float, 'y': float}]"),
-        connections: Optional[str] = Form(None,
-                                          description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
-        image_file: Optional[UploadFile] = File(None, description="Изображение комнаты"),
-        db: Session = Depends(get_db)
+    request: Request,
+    response: Response,
+    building_id: int = Form(..., description="ID здания, к которому относится комната"),
+    floor_id: int = Form(..., description="ID этажа, к которому относится комната"),
+    name: str = Form(..., description="Название комнаты"),
+    cab_id: str = Form(..., description="Кабинетный номер"),
+    cab_x: Optional[float] = Form(None, description="Координата X входа в кабинет"),
+    cab_y: Optional[float] = Form(None, description="Координата Y входа в кабинет"),
+    description: Optional[str] = Form(None, description="Описание комнаты"),
+    coordinates: Optional[str] = Form(None, description="Координаты комнаты (JSON-строка, [{'x': float, 'y': float}]"),
+    connections: Optional[str] = Form(None, description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
+    image_file: Optional[UploadFile] = File(None, description="Изображение комнаты"),
+    db: Session = Depends(get_db),
+    new_access_token: Optional[str] = Depends(admin_required)
 ):
     """Создать новую комнату и опционально связать её с другими объектами. Требуются права администратора."""
     try:
@@ -88,6 +86,8 @@ async def create_room_endpoint(
         )
         # Создаём комнату
         room = await create_room(db=db, room_data=room_data, image_file=image_file)
+        if new_access_token:
+            response.headers["X-New-Access-Token"] = new_access_token
         return room
     except ValueError as e:  # Ошибка валидации JSON или Pydantic
         raise HTTPException(status_code=400, detail=f"Неверный формат данных: {str(e)}")
@@ -97,25 +97,23 @@ async def create_room_endpoint(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Ошибка при создании комнаты: {str(e)}")
 
-
-@router.put("/{room_id}", response_model=RoomResponse, dependencies=[Depends(admin_required)])
+@router.put("/{room_id}", response_model=RoomResponse)
 async def update_room_endpoint(
-        room_id: int,
-        request: Request,
-        response: Response,
-        building_id: Optional[int] = Form(None, description="Новый ID здания"),
-        floor_id: Optional[int] = Form(None, description="Новый ID этажа"),
-        name: Optional[str] = Form(None, description="Новое название комнаты"),
-        cab_id: Optional[str] = Form(None, description="Новый кабинетный номер"),
-        cab_x: Optional[float] = Form(None, description="Новая координата X входа"),
-        cab_y: Optional[float] = Form(None, description="Новая координата Y входа"),
-        description: Optional[str] = Form(None, description="Новое описание комнаты"),
-        coordinates: Optional[str] = Form(None,
-                                          description="Координаты комнаты (JSON-строка, [{'x': float, 'y': float}]"),
-        connections: Optional[str] = Form(None,
-                                          description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
-        image_file: Optional[UploadFile] = File(None, description="Новое изображение комнаты"),
-        db: Session = Depends(get_db)
+    room_id: int,
+    request: Request,
+    response: Response,
+    building_id: Optional[int] = Form(None, description="Новый ID здания"),
+    floor_id: Optional[int] = Form(None, description="Новый ID этажа"),
+    name: Optional[str] = Form(None, description="Новое название комнаты"),
+    cab_id: Optional[str] = Form(None, description="Новый кабинетный номер"),
+    cab_x: Optional[float] = Form(None, description="Новая координата X входа"),
+    cab_y: Optional[float] = Form(None, description="Новая координата Y входа"),
+    description: Optional[str] = Form(None, description="Новое описание комнаты"),
+    coordinates: Optional[str] = Form(None, description="Координаты комнаты (JSON-строка, [{'x': float, 'y': float}]"),
+    connections: Optional[str] = Form(None, description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'segment_id': int}]"),
+    image_file: Optional[UploadFile] = File(None, description="Новое изображение комнаты"),
+    db: Session = Depends(get_db),
+    new_access_token: Optional[str] = Depends(admin_required)
 ):
     """Обновить информацию о комнате. Требуются права администратора."""
     try:
@@ -134,6 +132,8 @@ async def update_room_endpoint(
         updated_room = await update_room(db=db, room_id=room_id, room_data=update_data, image_file=image_file)
         if not updated_room:
             raise HTTPException(status_code=404, detail="Room not found")
+        if new_access_token:
+            response.headers["X-New-Access-Token"] = new_access_token
         return updated_room
     except ValueError as e:  # Ошибка валидации JSON или Pydantic
         raise HTTPException(status_code=400, detail=f"Неверный формат данных: {str(e)}")
@@ -142,18 +142,21 @@ async def update_room_endpoint(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при обновлении комнаты: {str(e)}")
 
-@router.delete("/{room_id}", response_model=RoomResponse, dependencies=[Depends(admin_required)])
+@router.delete("/{room_id}", response_model=RoomResponse)
 def delete_room_endpoint(
     room_id: int,
     request: Request,
     response: Response,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    new_access_token: Optional[str] = Depends(admin_required)
 ):
     """Удалить комнату. Требуются права администратора."""
     try:
         deleted_room = delete_room(db, room_id)
         if not deleted_room:
             raise HTTPException(status_code=404, detail="Room not found")
+        if new_access_token:
+            response.headers["X-New-Access-Token"] = new_access_token
         return deleted_room
     except HTTPException as e:
         raise e

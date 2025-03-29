@@ -6,9 +6,9 @@ from app.database.database import get_db
 from app.database.config.settings import settings
 from app.users.models import Admin
 from passlib.context import CryptContext
+from typing import Optional
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def create_token(data: dict, is_refresh: bool = False) -> str:
     """Создает токен (access или refresh)."""
@@ -25,7 +25,6 @@ def create_token(data: dict, is_refresh: bool = False) -> str:
         secret,
         algorithm=settings.ALGORITHM
     )
-
 
 def set_auth_cookies(response: Response, access: str, refresh: str):
     """Устанавливает куки для токенов."""
@@ -45,12 +44,10 @@ def set_auth_cookies(response: Response, access: str, refresh: str):
         **settings.COOKIE_CONFIG
     )
 
-
 async def get_token(request: Request) -> str | None:
     """Получает access_token из куки или заголовка."""
     return request.cookies.get("access_token") or \
            (request.headers.get("Authorization") or "").replace("Bearer ", "") or None
-
 
 async def refresh_access_token(request: Request, response: Response, db: Session) -> str:
     """Обновляет access_token и refresh_token по refresh_token, возвращает новый access_token."""
@@ -66,6 +63,8 @@ async def refresh_access_token(request: Request, response: Response, db: Session
         admin = db.query(Admin).filter(Admin.username == payload.get("sub")).first()
         if not admin:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
+        if not admin.is_admin:
+            raise HTTPException(status_code=403, detail="Требуются права администратора")
 
         new_access = create_token({"sub": admin.username, "is_admin": admin.is_admin})
         new_refresh = create_token({"sub": admin.username}, is_refresh=True)
@@ -74,29 +73,30 @@ async def refresh_access_token(request: Request, response: Response, db: Session
     except JWTError:
         raise HTTPException(status_code=401, detail="Недействительный refresh_token")
 
-
-async def admin_required(request: Request, response: Response, db: Session = Depends(get_db)):
-    """Проверяет токены и права админа, обновляет токены при необходимости."""
+async def admin_required(request: Request, response: Response, db: Session = Depends(get_db)) -> Optional[str]:
+    """Проверяет токены и права админа, обновляет токены только если access_token отсутствует."""
     if request.method == "GET":
-        return  # GET-запросы не требуют авторизации
+        return None  # GET-запросы не требуют авторизации
 
     token = await get_token(request)
+    if not token:  # Если access_token отсутствует
+        new_access_token = await refresh_access_token(request, response, db)
+        return new_access_token  # Возвращаем новый токен
+
+    # Если access_token присутствует, проверяем его
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Неверный тип токена")
-    except (JWTError, TypeError):  # Если токен отсутствует или истек
-        token = await refresh_access_token(request, response, db)
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-
-    if not payload.get("is_admin", False):
-        raise HTTPException(status_code=403, detail="Требуются права администратора")
-
+        if not payload.get("is_admin", False):
+            raise HTTPException(status_code=403, detail="Требуются права администратора")
+        return None  # Токен валиден, обновление не требуется
+    except JWTError:  # Если токен истёк или недействителен
+        raise HTTPException(status_code=401, detail="Недействительный или истёкший access_token")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Проверяет пароль."""
     return pwd_context.verify(plain_password, hashed_password)
-
 
 def get_password_hash(password: str) -> str:
     """Хеширует пароль."""

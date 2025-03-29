@@ -1,5 +1,4 @@
-# app/endpoints/map/connections.py
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from sqlalchemy.orm import Session
 from app.map.crud.connection import (
@@ -35,52 +34,62 @@ def read_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
     return connection
 
-@router.post("/", response_model=ConnectionResponse, dependencies=[Depends(admin_required)])
+@router.post("/", response_model=ConnectionResponse)
 def create_connection_endpoint(
     request: Request,
     response: Response,
     connection: ConnectionCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    new_access_token: Optional[str] = Depends(admin_required)
 ):
     """Создать новое соединение между любыми объектами. Требуются права администратора."""
     try:
-        return create_connection(db, connection)
+        result = create_connection(db, connection)
+        if new_access_token:
+            response.headers["X-New-Access-Token"] = new_access_token
+        return result
     except HTTPException as e:
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при создании соединения: {str(e)}")
 
-@router.put("/{connection_id}", response_model=ConnectionResponse, dependencies=[Depends(admin_required)])
+@router.put("/{connection_id}", response_model=ConnectionResponse)
 def update_connection_endpoint(
     connection_id: int,
     request: Request,
     response: Response,
     connection: ConnectionUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    new_access_token: Optional[str] = Depends(admin_required)
 ):
     """Обновить существующее соединение. Требуются права администратора."""
     try:
         updated_connection = update_connection(db, connection_id, connection)
         if not updated_connection:
             raise HTTPException(status_code=404, detail="Connection not found")
+        if new_access_token:
+            response.headers["X-New-Access-Token"] = new_access_token
         return updated_connection
     except HTTPException as e:
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при обновлении соединения: {str(e)}")
 
-@router.delete("/{connection_id}", response_model=ConnectionResponse, dependencies=[Depends(admin_required)])
+@router.delete("/{connection_id}", response_model=ConnectionResponse)
 def delete_connection_endpoint(
     connection_id: int,
     request: Request,
     response: Response,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    new_access_token: Optional[str] = Depends(admin_required)
 ):
     """Удалить соединение. Требуются права администратора."""
     try:
         deleted_connection = delete_connection(db, connection_id)
         if not deleted_connection:
             raise HTTPException(status_code=404, detail="Connection not found")
+        if new_access_token:
+            response.headers["X-New-Access-Token"] = new_access_token
         return deleted_connection
     except HTTPException as e:
         raise e

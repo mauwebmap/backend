@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from sqlalchemy.orm import Session
 from app.map.crud.outdoor_segment import (
     get_outdoor_segment,
@@ -32,36 +33,55 @@ def read_outdoor_segments_by_campus(campus_id: int, skip: int = 0, limit: int = 
     """Получить все уличные сегменты в указанном кампусе. Без авторизации."""
     return get_outdoor_segments_by_campus(db, campus_id, skip=skip, limit=limit)
 
-@router.post("/", response_model=OutdoorSegmentResponse, dependencies=[Depends(admin_required)])
+@router.post("/", response_model=OutdoorSegmentResponse)
 def create_outdoor_segment_endpoint(
     segment_data: OutdoorSegmentCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request: Request = None,
+    response: Response = None,
+    new_access_token: Optional[str] = Depends(admin_required)
 ):
     """Создать новый уличный сегмент (application/json). Требуются права администратора."""
     try:
-        return create_outdoor_segment(db, segment_data)
+        result = create_outdoor_segment(db, segment_data)
+        if new_access_token:
+            response.headers["X-New-Access-Token"] = new_access_token
+        return result
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ошибка при создании уличного сегмента: {str(e)}"
         )
 
-@router.put("/{outdoor_segment_id}", response_model=OutdoorSegmentResponse, dependencies=[Depends(admin_required)])
+@router.put("/{outdoor_segment_id}", response_model=OutdoorSegmentResponse)
 def update_outdoor_segment_endpoint(
     outdoor_segment_id: int,
     segment_data: OutdoorSegmentUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request: Request = None,
+    response: Response = None,
+    new_access_token: Optional[str] = Depends(admin_required)
 ):
     """Обновить информацию об уличном сегменте (application/json). Требуются права администратора."""
     updated_segment = update_outdoor_segment(db, outdoor_segment_id, segment_data)
     if not updated_segment:
         raise HTTPException(status_code=404, detail="Outdoor segment not found")
+    if new_access_token:
+        response.headers["X-New-Access-Token"] = new_access_token
     return updated_segment
 
-@router.delete("/{outdoor_segment_id}", response_model=OutdoorSegmentResponse, dependencies=[Depends(admin_required)])
-def delete_outdoor_segment_endpoint(outdoor_segment_id: int, db: Session = Depends(get_db)):
+@router.delete("/{outdoor_segment_id}", response_model=OutdoorSegmentResponse)
+def delete_outdoor_segment_endpoint(
+    outdoor_segment_id: int,
+    db: Session = Depends(get_db),
+    request: Request = None,
+    response: Response = None,
+    new_access_token: Optional[str] = Depends(admin_required)
+):
     """Удалить уличный сегмент. Требуются права администратора."""
     deleted_segment = delete_outdoor_segment(db, outdoor_segment_id)
     if not deleted_segment:
         raise HTTPException(status_code=404, detail="Outdoor segment not found")
+    if new_access_token:
+        response.headers["X-New-Access-Token"] = new_access_token
     return deleted_segment
