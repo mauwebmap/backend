@@ -13,17 +13,17 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v4
 
-    - name: Setup SSH key
-      run: |
-        mkdir -p ~/.ssh
-        echo "${{ secrets.CAMPUSKEY }}" > ~/.ssh/deploy_key
-        chmod 600 ~/.ssh/deploy_key
-        ssh-keyscan -H sereosly.ru >> ~/.ssh/known_hosts
+    - name: Setup SSH agent
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.CAMPUSKEY }}
 
     - name: Deploy to server
       run: |
-        ssh -i ~/.ssh/deploy_key backenduser@sereosly.ru << 'EOF'
-          cd /home/backenduser/backend
-          git pull origin main
+        ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_SERVER }} << 'EOF'
+          set -e
+          cd /home/${{ secrets.DEPLOY_USER }}/backend
+          git fetch origin main
+          git reset --hard origin/main
           sudo systemctl restart backendmap.service
         EOF
