@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from app.map.schemas.connection import ConnectionCreate
+from app.map.schemas.connection import ConnectionCreate, ConnectionResponse
 
 class OutdoorSegmentBase(BaseModel):
     type: str
@@ -30,6 +30,7 @@ class OutdoorSegmentUpdate(BaseModel):
 
 class OutdoorSegment(OutdoorSegmentBase):
     id: int
+    connections: List[ConnectionResponse] = Field(default_factory=list, description="Список соединений с другими уличными сегментами")
 
     class Config:
         from_attributes = True
