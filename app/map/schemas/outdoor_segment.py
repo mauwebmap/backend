@@ -1,11 +1,12 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from app.map.schemas.connection import ConnectionCreate
 
 class OutdoorSegmentBase(BaseModel):
     type: str
     campus_id: int
-    start_building_id: Optional[int]
-    end_building_id: Optional[int]
+    start_building_id: Optional[int] = None
+    end_building_id: Optional[int] = None
     start_x: float
     start_y: float
     end_x: float
@@ -13,18 +14,19 @@ class OutdoorSegmentBase(BaseModel):
     weight: int
 
 class OutdoorSegmentCreate(OutdoorSegmentBase):
-    pass
+    connections: List[ConnectionCreate] = Field(default_factory=list, description="Список соединений с другими уличными сегментами")
 
 class OutdoorSegmentUpdate(BaseModel):
-    type: Optional[str]
-    campus_id: Optional[int]
-    start_building_id: Optional[int]
-    end_building_id: Optional[int]
-    start_x: Optional[float]
-    start_y: Optional[float]
-    end_x: Optional[float]
-    end_y: Optional[float]
-    weight: Optional[int]
+    type: Optional[str] = None
+    campus_id: Optional[int] = None
+    start_building_id: Optional[int] = None
+    end_building_id: Optional[int] = None
+    start_x: Optional[float] = None
+    start_y: Optional[float] = None
+    end_x: Optional[float] = None
+    end_y: Optional[float] = None
+    weight: Optional[int] = None
+    connections: Optional[List[ConnectionCreate]] = Field(default_factory=list, description="Список соединений с другими уличными сегментами")
 
 class OutdoorSegment(OutdoorSegmentBase):
     id: int

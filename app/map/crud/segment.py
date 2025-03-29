@@ -71,24 +71,26 @@ def update_segment(db: Session, segment_id: int, segment_data: SegmentCreate):
         raise HTTPException(status_code=404, detail="Segment not found")
 
     # Обновляем основные данные сегмента
-    update_data = segment_data.dict(exclude={"connections"})
+    update_data = segment_data.dict(exclude_unset=True, exclude={"connections"})
     for key, value in update_data.items():
-        setattr(db_segment, key, value)
+        if value is not None:  # Обновляем только те поля, которые переданы
+            setattr(db_segment, key, value)
 
-    # Удаляем старые соединения
-    db.query(Connection).filter(Connection.segment_id == db_segment.id).delete()
-
-    # Создаём новые соединения
-    for connection_data in segment_data.connections:
-        db_connection = Connection(
-            segment_id=db_segment.id,
-            to_segment_id=connection_data.to_segment_id,
-            from_floor_id=connection_data.from_floor_id,
-            to_floor_id=connection_data.to_floor_id,
-            type=connection_data.type.value,
-            weight=connection_data.weight
-        )
-        db.add(db_connection)
+    # Обрабатываем connections, если они переданы
+    if segment_data.connections:
+        # Удаляем старые соединения
+        db.query(Connection).filter(Connection.segment_id == db_segment.id).delete()
+        # Создаём новые соединения
+        for connection_data in segment_data.connections:
+            db_connection = Connection(
+                segment_id=db_segment.id,
+                to_segment_id=connection_data.to_segment_id,
+                from_floor_id=connection_data.from_floor_id,
+                to_floor_id=connection_data.to_floor_id,
+                type=connection_data.type.value,
+                weight=connection_data.weight
+            )
+            db.add(db_connection)
 
     db.commit()
     db.refresh(db_segment)

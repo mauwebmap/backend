@@ -49,37 +49,28 @@ def read_segments_by_floor_and_campus(campus_id: int, floor_id: int, db: Session
 
 @router.post("/", response_model=SegmentResponse, dependencies=[Depends(admin_required)])
 def create_segment_endpoint(
-        request: Request,
-        response: Response,
-        start_x: float = Form(..., description="Координата X начала сегмента"),
-        start_y: float = Form(..., description="Координата Y начала сегмента"),
-        end_x: float = Form(..., description="Координата X конца сегмента"),
-        end_y: float = Form(..., description="Координата Y конца сегмента"),
-        floor_id: int = Form(..., description="ID этажа, к которому относится сегмент"),
-        building_id: int = Form(..., description="ID здания, к которому относится сегмент"),
-        connections: str = Form('[]',
-                                description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'to_segment_id': int, 'from_floor_id': int, 'to_floor_id': int}]"),
-        db: Session = Depends(get_db)
+    segment_data: SegmentCreate,
+    db: Session = Depends(get_db)
 ):
     """
-    Создать новый сегмент с возможными соединениями (multipart/form-data).
+    Создать новый сегмент с возможными соединениями (application/json).
     Требуются права администратора.
     """
     try:
         # Парсим connections из JSON-строки
-        connections_list = [ConnectionCreate(**conn) for conn in json.loads(connections)] if connections else []
+        connections_list = [ConnectionCreate(**conn) for conn in segment_data.connections]
 
         # Формируем объект SegmentCreate
-        segment_data = SegmentCreate(
-            start_x=start_x,
-            start_y=start_y,
-            end_x=end_x,
-            end_y=end_y,
-            floor_id=floor_id,
-            building_id=building_id,
+        segment = SegmentCreate(
+            start_x=segment_data.start_x,
+            start_y=segment_data.start_y,
+            end_x=segment_data.end_x,
+            end_y=segment_data.end_y,
+            floor_id=segment_data.floor_id,
+            building_id=segment_data.building_id,
             connections=connections_list
         )
-        return create_segment_with_connections(db, segment_data)
+        return create_segment_with_connections(db, segment)
     except ValueError as e:  # Ошибка валидации JSON
         raise HTTPException(status_code=400, detail=f"Неверный формат данных: {str(e)}")
     except HTTPException as e:
@@ -93,38 +84,29 @@ def create_segment_endpoint(
 
 @router.put("/{segment_id}", response_model=SegmentResponse, dependencies=[Depends(admin_required)])
 def update_segment_endpoint(
-        segment_id: int,
-        request: Request,
-        response: Response,
-        start_x: float = Form(None, description="Координата X начала сегмента"),
-        start_y: float = Form(None, description="Координата Y начала сегмента"),
-        end_x: float = Form(None, description="Координата X конца сегмента"),
-        end_y: float = Form(None, description="Координата Y конца сегмента"),
-        floor_id: int = Form(None, description="ID этажа, к которому относится сегмент"),
-        building_id: int = Form(None, description="ID здания, к которому относится сегмент"),
-        connections: str = Form(None,
-                                description="Список соединений (JSON-строка, [{'type': str, 'weight': float, 'to_segment_id': int, 'from_floor_id': int, 'to_floor_id': int}]"),
-        db: Session = Depends(get_db)
+    segment_id: int,
+    segment_data: SegmentCreate,
+    db: Session = Depends(get_db)
 ):
     """
-    Обновить информацию о сегменте (multipart/form-data).
+    Обновить информацию о сегменте (application/json).
     Требуются права администратора.
     """
     try:
         # Парсим connections из JSON-строки, если переданы
-        connections_list = [ConnectionCreate(**conn) for conn in json.loads(connections)] if connections else None
+        connections_list = [ConnectionCreate(**conn) for conn in segment_data.connections] if segment_data.connections else []
 
         # Формируем объект SegmentCreate
-        segment_data = SegmentCreate(
-            start_x=start_x,
-            start_y=start_y,
-            end_x=end_x,
-            end_y=end_y,
-            floor_id=floor_id,
-            building_id=building_id,
-            connections=connections_list if connections_list is not None else []
+        segment = SegmentCreate(
+            start_x=segment_data.start_x,
+            start_y=segment_data.start_y,
+            end_x=segment_data.end_x,
+            end_y=segment_data.end_y,
+            floor_id=segment_data.floor_id,
+            building_id=segment_data.building_id,
+            connections=connections_list
         )
-        return update_segment(db, segment_id, segment_data)
+        return update_segment(db, segment_id, segment)
     except ValueError as e:  # Ошибка валидации JSON
         raise HTTPException(status_code=400, detail=f"Неверный формат данных: {str(e)}")
     except HTTPException as e:
