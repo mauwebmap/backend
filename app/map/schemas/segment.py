@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from app.map.models.enums import ConnectionCreate, ConnectionResponse  # Импортируем перечисление типов соединений
+from app.map.schemas.connection import ConnectionCreate, ConnectionResponse
 
 class SegmentBase(BaseModel):
     start_x: float
