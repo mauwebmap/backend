@@ -10,8 +10,8 @@ class ConnectionBase(BaseModel):
     to_outdoor_id: Optional[int] = Field(None, description="ID конечного внешнего сегмента (если соединение с улицей)")
     from_floor_id: Optional[int] = Field(None, description="ID начального этажа (если соединение между этажами)")
     to_floor_id: Optional[int] = Field(None, description="ID конечного этажа (если соединение между этажами)")
-    type: str = Field(..., description="Тип соединения (например, 'door', 'stairs', 'elevator')")
-    weight: float = Field(..., description="Вес соединения (например, время прохождения)")
+    type: Optional[str] = Field(..., description="Тип соединения (например, 'door', 'stairs', 'elevator')")
+    weight: Optional[float] = Field(..., description="Вес соединения (например, время прохождения)")
 
 class ConnectionCreate(ConnectionBase):
     pass
