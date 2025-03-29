@@ -68,6 +68,13 @@ async def read_root(request: Request):
         <title>Документация проекта</title>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown.min.css">
         <style>
+            @font-face {{
+                font-family: 'Truin';
+                src: url('/static/Truin-Regular.ttf?v=1') format('truetype');
+                font-weight: normal;
+                font-style: normal;
+            }}
+
             * {{
                 box-sizing: border-box;
                 margin: 0;
@@ -77,8 +84,8 @@ async def read_root(request: Request):
                 background-color: #0d1117;
             }}
             .markdown-body {{
+                font-family: 'Truin', sans-serif;
                 font-size: 24px;
-                
                 min-width: 200px;
                 max-width: 980px;
                 margin: 0 auto;
