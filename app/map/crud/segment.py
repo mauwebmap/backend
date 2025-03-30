@@ -41,17 +41,18 @@ def create_segment_with_connections(db: Session, segment_data: SegmentCreate):
         db.add(db_segment)
         db.flush()  # Фиксируем сегмент в базе, чтобы получить ID
 
-        # Создаём соединения
-        for connection_data in segment_data.connections:
-            db_connection = Connection(
-                segment_id=db_segment.id,
-                to_segment_id=connection_data.to_segment_id,
-                from_floor_id=connection_data.from_floor_id,
-                to_floor_id=connection_data.to_floor_id,
-                type=connection_data.type.value,  # Используем значение Enum
-                weight=connection_data.weight
-            )
-            db.add(db_connection)
+        # Если connections передан и не пустой, создаём соединения
+        if segment_data.connections:
+            for connection_data in segment_data.connections:
+                db_connection = Connection(
+                    from_segment_id=db_segment.id,  # Проставляем from_segment_id
+                    to_segment_id=connection_data.to_segment_id,
+                    from_floor_id=connection_data.from_floor_id,
+                    to_floor_id=connection_data.to_floor_id,
+                    type=connection_data.type.value,
+                    weight=connection_data.weight
+                )
+                db.add(db_connection)
 
         db.commit()
         db.refresh(db_segment)
@@ -62,6 +63,7 @@ def create_segment_with_connections(db: Session, segment_data: SegmentCreate):
             status_code=500,
             detail=f"Ошибка при создании сегмента и связей: {str(e)}"
         )
+
 
 
 # Обновить сегмент

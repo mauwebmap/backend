@@ -85,7 +85,8 @@ async def read_root(request: Request):
             }}
             .markdown-body {{
                 font-family: 'Truin', sans-serif;
-                font-size: 24px;
+                font-size: 26px;
+                letter-spacing: 0.12em;
                 min-width: 200px;
                 max-width: 980px;
                 margin: 0 auto;
@@ -93,7 +94,7 @@ async def read_root(request: Request):
             }}
             @media (max-width: 767px) {{
                 .markdown-body {{
-                    padding: 15px;
+                    padding: 20px;
                 }}
             }}
         </style>
