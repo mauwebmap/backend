@@ -31,7 +31,6 @@ def get_rooms_by_floor_and_campus(db: Session, floor_id: int, campus_id: int):
         .all()
     )
 
-
 async def create_room(db: Session, room_data: RoomCreate, image_file: Optional[UploadFile] = None):
     # Исключаем connections из словаря, так как это не поле модели Room
     room_dict = room_data.dict(exclude={"connections"})
@@ -60,32 +59,34 @@ async def create_room(db: Session, room_data: RoomCreate, image_file: Optional[U
     db.flush()
 
     # Обрабатываем connections
-    for connection_data in room_data.connections:
-        db_connection = Connection(
-            room_id=db_room.id,
-            segment_id=connection_data.segment_id,
-            type=connection_data.type.value,
-            weight=connection_data.weight
-        )
-        db.add(db_connection)
+    if room_data.connections:
+        for connection_data in room_data.connections:
+            if connection_data.segment_id is not None:
+                db_connection = Connection(
+                    room_id=db_room.id,
+                    segment_id=connection_data.segment_id,
+                    type=connection_data.type.value,
+                    weight=connection_data.weight
+                )
+                db.add(db_connection)
+            else:
+                raise HTTPException(status_code=400, detail="Соединения комнаты должны иметь segment_id")
 
     db.commit()
     db.refresh(db_room)
     return db_room
 
-
 async def update_room(db: Session, room_id: int, room_data: RoomUpdate, image_file: Optional[UploadFile] = None):
     db_room = db.query(Room).filter(Room.id == room_id).first()
     if not db_room:
-        return None
+        raise HTTPException(status_code=404, detail="Room not found")
 
-    # Обновляем поля комнаты
+    # Обновляем только переданные поля комнаты
     update_data = room_data.dict(exclude_unset=True, exclude={"connections"})
 
     # Обрабатываем coordinates
     if room_data.coordinates is not None:
-        update_data["coordinates"] = [coord.dict() for coord in
-                                      room_data.coordinates] if room_data.coordinates else None
+        update_data["coordinates"] = [coord.dict() for coord in room_data.coordinates] if room_data.coordinates else None
 
     # Обрабатываем image_file
     if image_file:
@@ -111,13 +112,16 @@ async def update_room(db: Session, room_id: int, room_data: RoomUpdate, image_fi
         db.query(Connection).filter(Connection.room_id == room_id).delete()
         # Добавляем новые связи
         for connection_data in room_data.connections:
-            db_connection = Connection(
-                room_id=db_room.id,
-                segment_id=connection_data.segment_id,
-                type=connection_data.type.value,
-                weight=connection_data.weight
-            )
-            db.add(db_connection)
+            if connection_data.segment_id is not None:
+                db_connection = Connection(
+                    room_id=db_room.id,
+                    segment_id=connection_data.segment_id,
+                    type=connection_data.type.value,
+                    weight=connection_data.weight
+                )
+                db.add(db_connection)
+            else:
+                raise HTTPException(status_code=400, detail="Соединения комнаты должны иметь segment_id")
 
     db.commit()
     db.refresh(db_room)

@@ -29,25 +29,48 @@ def get_segments_by_floor_and_campus(db: Session, floor_id: int, campus_id: int)
         .all()
     )
 
-
 # Создать сегмент с соединениями
 def create_segment_with_connections(db: Session, segment_data: SegmentCreate):
     try:
-        # Исключаем connections из словаря, так как это не поле модели Segment
-        segment_dict = segment_data.dict(exclude={"connections"})
-
-        # Создаём сегмент
+        # Создаем или обновляем сегмент
+        segment_dict = segment_data.model_dump(exclude={"connections"})
         db_segment = Segment(**segment_dict)
         db.add(db_segment)
-        db.flush()  # Фиксируем сегмент в базе, чтобы получить ID
+        db.flush()  # Получаем ID сегмента
 
-        # Если connections передан и не пустой, создаём соединения
+        # Обрабатываем соединения
         if segment_data.connections:
             for connection_data in segment_data.connections:
-                db_connection = Connection(
-                    segment_id=db_segment.id,
-                    **connection_data.dict()  # <-- Используем .dict()
-                )
+                connection_dict = {}
+
+                # Определяем тип соединения и заполняем соответствующие поля
+                if connection_data.room_id is not None:
+                    connection_dict = {
+                        "room_id": connection_data.room_id,
+                        "segment_id": db_segment.id,
+                        "type": connection_data.type,
+                        "weight": connection_data.weight
+                    }
+                elif connection_data.to_segment_id is not None:
+                    connection_dict = {
+                        "from_segment_id": db_segment.id,
+                        "to_segment_id": connection_data.to_segment_id,
+                        "type": connection_data.type,
+                        "weight": connection_data.weight
+                    }
+                elif connection_data.from_floor_id is not None and connection_data.to_floor_id is not None:
+                    connection_dict = {
+                        "segment_id": db_segment.id,
+                        "from_floor_id": connection_data.from_floor_id,
+                        "to_floor_id": connection_data.to_floor_id,
+                        "type": connection_data.type,
+                        "weight": connection_data.weight
+                    }
+                else:
+                    raise ValueError("Некорректные данные соединения")
+
+                # Создаем соединение в базе данных
+                db_connection = Connection(**connection_dict)
                 db.add(db_connection)
 
         db.commit()
@@ -55,36 +78,65 @@ def create_segment_with_connections(db: Session, segment_data: SegmentCreate):
         return db_segment
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ошибка при создании сегмента: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Ошибка при создании или обновлении сегмента: {str(e)}")
 
-
-
-# Обновить сегмент
 # Обновить сегмент
 def update_segment(db: Session, segment_id: int, segment_data: SegmentCreate):
     db_segment = get_segment(db, segment_id)
     if not db_segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
-    # Обновляем основные данные сегмента, исключая connections
-    update_data = segment_data.dict(exclude_unset=True, exclude={"connections"})
+    # Обновляем только переданные поля сегмента
+    update_data = segment_data.model_dump(exclude_unset=True, exclude={"connections"})
     for key, value in update_data.items():
         setattr(db_segment, key, value)
 
-    # Обрабатываем connections, только если они переданы
+    # Обрабатываем connections, если они переданы
     if segment_data.connections is not None:
         # Удаляем старые соединения
-        db.query(Connection).filter(Connection.segment_id == db_segment.id).delete()
+        db.query(Connection).filter(
+            (Connection.from_segment_id == db_segment.id) |
+            (Connection.to_segment_id == db_segment.id) |
+            (Connection.segment_id == db_segment.id)
+        ).delete()
 
         # Создаём новые соединения
         for connection_data in segment_data.connections:
-            db_connection = Connection(
-                segment_id=db_segment.id,
-                **connection_data.dict()  # Используем .dict() для удобного маппинга
-            )
+            connection_dict = {}
+
+            if connection_data.room_id is not None:
+                connection_dict = {
+                    "room_id": connection_data.room_id,
+                    "segment_id": db_segment.id,
+                    "type": connection_data.type,
+                    "weight": connection_data.weight
+                }
+            elif connection_data.to_segment_id is not None:
+                connection_dict = {
+                    "from_segment_id": db_segment.id,
+                    "to_segment_id": connection_data.to_segment_id,
+                    "type": connection_data.type,
+                    "weight": connection_data.weight
+                }
+            elif connection_data.to_outdoor_id is not None:
+                connection_dict = {
+                    "from_segment_id": db_segment.id,
+                    "to_outdoor_id": connection_data.to_outdoor_id,
+                    "type": connection_data.type,
+                    "weight": connection_data.weight
+                }
+            elif connection_data.from_floor_id is not None and connection_data.to_floor_id is not None:
+                connection_dict = {
+                    "segment_id": db_segment.id,
+                    "from_floor_id": connection_data.from_floor_id,
+                    "to_floor_id": connection_data.to_floor_id,
+                    "type": connection_data.type,
+                    "weight": connection_data.weight
+                }
+            else:
+                raise ValueError("Некорректные данные соединения")
+
+            db_connection = Connection(**connection_dict)
             db.add(db_connection)
 
     db.commit()
