@@ -45,12 +45,8 @@ def create_segment_with_connections(db: Session, segment_data: SegmentCreate):
         if segment_data.connections:
             for connection_data in segment_data.connections:
                 db_connection = Connection(
-                    from_segment_id=db_segment.id,  # Проставляем from_segment_id
-                    to_segment_id=connection_data.to_segment_id,
-                    from_floor_id=connection_data.from_floor_id,
-                    to_floor_id=connection_data.to_floor_id,
-                    type=connection_data.type.value,
-                    weight=connection_data.weight
+                    segment_id=db_segment.id,
+                    **connection_data.dict()  # <-- Используем .dict()
                 )
                 db.add(db_connection)
 
@@ -61,43 +57,39 @@ def create_segment_with_connections(db: Session, segment_data: SegmentCreate):
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Ошибка при создании сегмента и связей: {str(e)}"
+            detail=f"Ошибка при создании сегмента: {str(e)}"
         )
 
 
 
+# Обновить сегмент
 # Обновить сегмент
 def update_segment(db: Session, segment_id: int, segment_data: SegmentCreate):
     db_segment = get_segment(db, segment_id)
     if not db_segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
-    # Обновляем основные данные сегмента
+    # Обновляем основные данные сегмента, исключая connections
     update_data = segment_data.dict(exclude_unset=True, exclude={"connections"})
     for key, value in update_data.items():
-        if value is not None:  # Обновляем только те поля, которые переданы
-            setattr(db_segment, key, value)
+        setattr(db_segment, key, value)
 
-    # Обрабатываем connections, если они переданы
-    if segment_data.connections:
+    # Обрабатываем connections, только если они переданы
+    if segment_data.connections is not None:
         # Удаляем старые соединения
         db.query(Connection).filter(Connection.segment_id == db_segment.id).delete()
+
         # Создаём новые соединения
         for connection_data in segment_data.connections:
             db_connection = Connection(
                 segment_id=db_segment.id,
-                to_segment_id=connection_data.to_segment_id,
-                from_floor_id=connection_data.from_floor_id,
-                to_floor_id=connection_data.to_floor_id,
-                type=connection_data.type.value,
-                weight=connection_data.weight
+                **connection_data.dict()  # Используем .dict() для удобного маппинга
             )
             db.add(db_connection)
 
     db.commit()
     db.refresh(db_segment)
     return db_segment
-
 
 # Удалить сегмент
 def delete_segment(db: Session, segment_id: int):

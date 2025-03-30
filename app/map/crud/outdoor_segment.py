@@ -26,22 +26,20 @@ def get_outdoor_segments_by_campus(db: Session, campus_id: int, skip: int = 0, l
 
 def create_outdoor_segment(db: Session, outdoor_segment: OutdoorSegmentCreate):
     try:
-        # Исключаем connections из словаря, так как это не поле модели OutdoorSegment
-        segment_dict = outdoor_segment.dict(exclude={"connections"})
+        # Исключаем connections, если их нет
+        segment_dict = outdoor_segment.dict(exclude_unset=True, exclude={"connections"})
 
         # Создаём уличный сегмент
         db_outdoor_segment = OutdoorSegment(**segment_dict)
         db.add(db_outdoor_segment)
-        db.flush()  # Фиксируем сегмент в базе, чтобы получить ID
+        db.flush()  # Фиксируем в БД, чтобы получить ID
 
-        # Создаём соединения
+        # Если переданы connections, создаем их
         if outdoor_segment.connections:
             for connection_data in outdoor_segment.connections:
                 db_connection = Connection(
                     from_outdoor_id=db_outdoor_segment.id,
-                    to_outdoor_id=connection_data.to_outdoor_id,
-                    type=connection_data.type,
-                    weight=connection_data.weight
+                    **connection_data.dict()
                 )
                 db.add(db_connection)
 
@@ -52,7 +50,7 @@ def create_outdoor_segment(db: Session, outdoor_segment: OutdoorSegmentCreate):
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Ошибка при создании уличных сегментов и связей: {str(e)}"
+            detail=f"Ошибка при создании уличного сегмента: {str(e)}"
         )
 
 def update_outdoor_segment(db: Session, outdoor_segment_id: int, outdoor_segment: OutdoorSegmentUpdate):
@@ -60,26 +58,22 @@ def update_outdoor_segment(db: Session, outdoor_segment_id: int, outdoor_segment
     if not db_outdoor_segment:
         raise HTTPException(status_code=404, detail="Outdoor segment not found")
 
-    # Обновляем основные данные уличных сегментов
+    # Обновляем только переданные данные
     update_data = outdoor_segment.dict(exclude_unset=True, exclude={"connections"})
     for key, value in update_data.items():
         setattr(db_outdoor_segment, key, value)
 
-    # Обрабатываем connections, если они переданы
-    if outdoor_segment.connections:
-        # Удаляем старые соединения
+    # Если connections переданы, удаляем старые и создаём новые
+    if outdoor_segment.connections is not None:
         db.query(Connection).filter(
             (Connection.from_outdoor_id == db_outdoor_segment.id) |
             (Connection.to_outdoor_id == db_outdoor_segment.id)
         ).delete()
 
-        # Создаём новые соединения
         for connection_data in outdoor_segment.connections:
             db_connection = Connection(
                 from_outdoor_id=db_outdoor_segment.id,
-                to_outdoor_id=connection_data.to_outdoor_id,
-                type=connection_data.type,
-                weight=connection_data.weight
+                **connection_data.dict()
             )
             db.add(db_connection)
 
