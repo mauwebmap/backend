@@ -22,14 +22,15 @@ jobs:
       run: ssh-add -l
 
     - name: Add server to known_hosts
-      run: ssh-keyscan -H -v ${{ secrets.DEPLOY_SERVER }} >> ~/.ssh/known_hosts
+      run: ssh-keyscan -H -v -p 44973 *** >> ~/.ssh/known_hosts
+
 
     - name: Print known_hosts
       run: cat ~/.ssh/known_hosts
 
     - name: Deploy to server
       run: |
-        ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_SERVER }} << 'EOF'
+        ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_SERVER }}   << 'EOF'
           set -e
           cd /home/${{ secrets.DEPLOY_USER }}/backend
           git fetch origin main
