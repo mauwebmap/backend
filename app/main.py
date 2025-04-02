@@ -1,10 +1,11 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from pathlib import Path
 import markdown
 import os
+from starlette.responses import Response
 
 app = FastAPI(
     swagger_ui_init_oauth={
@@ -54,7 +55,15 @@ app.add_middleware(
 static_dir = Path("static")
 static_dir.mkdir(exist_ok=True)
 # Подключаем статические файлы
-app.mount("/static", StaticFiles(directory="static"), name="static")
+@app.get("/static/{path:path}")
+async def serve_static(path: str, request: Request):
+    file_path = static_dir / path
+    if not file_path.exists():
+        return Response(status_code=404, content="File not found")
+
+    response = FileResponse(file_path)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 
 # Главная страница с README
