@@ -22,8 +22,7 @@ jobs:
       run: ssh-add -l
 
     - name: Add server to known_hosts
-      run: ssh-keyscan -H -v -p 44973 *** >> ~/.ssh/known_hosts
-
+      run: ssh-keyscan -H -v -p 44973 ${{ secrets.DEPLOY_SERVER }} >> ~/.ssh/known_hosts
 
     - name: Print known_hosts
       run: cat ~/.ssh/known_hosts
