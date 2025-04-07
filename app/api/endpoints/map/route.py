@@ -1,3 +1,4 @@
+# Эндпоинт /route
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -79,7 +80,6 @@ def get_route(start: str, end: str, db: Session = Depends(get_db)):
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Ошибка при обработке вершины {vertex}: {e}")
 
-
         if current_points:
             try:
                 floor_num = (
@@ -91,7 +91,6 @@ def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 path_by_floor.append({"floor": floor_num, "points": current_points})
             except SQLAlchemyError as e:
                 raise HTTPException(status_code=500, detail=f"Ошибка при получении номера этажа: {e}")
-
 
         return {"path": path_by_floor, "weight": weight}
 
