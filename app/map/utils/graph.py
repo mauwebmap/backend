@@ -59,8 +59,7 @@ class Graph:
 
     def find_path(self, start, end):
         """
-        Находит кратчайший путь между start и end с помощью алгоритма A*.
-        Использует эвристику landmark_heuristic.
+        Находит кратчайший путь между start и end с помощью алгоритма Dijkstra.
         """
         if start not in self.vertices or end not in self.vertices:
             print(f"[find_path] Одна из вершин не найдена: start={start}, end={end}")
@@ -68,14 +67,13 @@ class Graph:
 
         from heapq import heappush, heappop
 
-        # Очередь с приоритетами: (f_score, вершина, путь)
+        # Очередь с приоритетами: (g_score, вершина, путь)
         queue = [(0, start, [start])]
-        g_scores = {start: 0}  # Стоимость пути от start до текущей вершины
-        f_scores = {start: self.landmark_heuristic(start, end)}  # Оценка f = g + h
+        distances = {start: 0}  # Расстояние от start до текущей вершины
         visited = set()
 
         while queue:
-            _, current, path = heappop(queue)
+            dist, current, path = heappop(queue)
 
             if current in visited:
                 continue
@@ -89,14 +87,12 @@ class Graph:
                 if neighbor in visited:
                     continue
 
-                tentative_g_score = g_scores[current] + weight
+                new_dist = distances[current] + weight
 
-                if neighbor not in g_scores or tentative_g_score < g_scores[neighbor]:
-                    g_scores[neighbor] = tentative_g_score
-                    f_score = tentative_g_score + self.landmark_heuristic(neighbor, end)
-                    f_scores[neighbor] = f_score
+                if neighbor not in distances or new_dist < distances[neighbor]:
+                    distances[neighbor] = new_dist
                     new_path = path + [neighbor]
-                    heappush(queue, (f_score, neighbor, new_path))
+                    heappush(queue, (new_dist, neighbor, new_path))
 
         print(f"[find_path] Путь от {start} до {end} не найден")
         return None
