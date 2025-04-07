@@ -133,15 +133,12 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     is_outdoor_only = start_type == "outdoor" and end_type == "outdoor"
 
     # Загружаем данные
-    if not is_outdoor_only and building_ids:
+    if not is_outdoor_only:
         rooms = db.query(Room).filter(Room.building_id.in_(building_ids)).all()
         print(f"[build_graph] Loaded rooms: {[r.id for r in rooms]}")
-        # Фильтруем сегменты по building_id и floor_id
+        # Фильтруем сегменты только по floor_id, чтобы учесть сегменты на тех же этажах, но в других зданиях
         if floor_ids:
-            segments = db.query(Segment).filter(
-                Segment.building_id.in_(building_ids),
-                Segment.floor_id.in_(floor_ids)
-            ).all()
+            segments = db.query(Segment).filter(Segment.floor_id.in_(floor_ids)).all()
         else:
             segments = db.query(Segment).filter(Segment.building_id.in_(building_ids)).all()
         print(f"[build_graph] Loaded segments: {[s.id for s in segments]}")
