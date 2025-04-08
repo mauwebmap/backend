@@ -148,7 +148,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         logger.debug(f"[build_graph] Processing connection: id={conn.id}, type={conn.type}, room_id={conn.room_id}, segment_id={conn.segment_id}, from_segment_id={conn.from_segment_id}, to_segment_id={conn.to_segment_id}")
         weight = conn.weight if conn.weight is not None else 1
 
-        if conn.type == "door" and conn.room_id and conn.segment_id:
+        if conn.type.lower() == "door" and conn.room_id and conn.segment_id:
             room_vertex = f"room_{conn.room_id}"
             segment = db.query(Segment).filter(Segment.id == conn.segment_id).first()
             if not segment:
@@ -174,7 +174,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_edge(room_vertex, target_vertex, weight)
             logger.debug(f"[build_graph] Adding edge: {room_vertex} -> {target_vertex}, weight={weight}, from_coords={room_coords}, to_coords={target_coords}")
 
-        elif conn.type == "stairs" and conn.from_segment_id and conn.to_segment_id:
+        elif conn.type.lower() == "stairs" and conn.from_segment_id and conn.to_segment_id:
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
             if not from_segment or not to_segment:
@@ -188,7 +188,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_edge(from_vertex, to_vertex, weight)
             logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
 
-        elif conn.type == "outdoor" and conn.from_segment_id and conn.to_outdoor_id:
+        elif conn.type.lower() == "outdoor" and conn.from_segment_id and conn.to_outdoor_id:
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == conn.to_outdoor_id).first()
             if not from_segment or not to_outdoor:

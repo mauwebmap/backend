@@ -1,5 +1,7 @@
 # main.py
 import logging
+import logging.handlers
+import queue
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -9,15 +11,35 @@ import markdown
 import os
 from starlette.responses import Response
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.DEBUG,  # Уровень логирования (DEBUG, чтобы видеть все сообщения)
-    format='%(asctime)s [%(levelname)s] %(message)s',  # Формат логов
-    handlers=[
-        logging.StreamHandler(),  # Вывод в stdout (перенаправляется systemd в /var/log/myapp.log)
-        logging.FileHandler("/var/log/myapp.log")  # Дополнительно записываем в файл
-    ]
-)
+# Настройка очереди для логов
+log_queue = queue.Queue(-1)  # Неограниченная очередь
+queue_handler = logging.handlers.QueueHandler(log_queue)
+
+# Форматтер для логов
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+
+# Обработчик для записи в файл и stdout
+file_handler = logging.FileHandler("/var/log/myapp.log")
+file_handler.setFormatter(formatter)
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+
+# Listener для обработки логов из очереди
+listener = logging.handlers.QueueListener(log_queue, file_handler, stream_handler)
+listener.start()
+
+# Настройка корневого логгера
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)
+# Удаляем все существующие обработчики
+for handler in root_logger.handlers[:]:
+    root_logger.removeHandler(handler)
+root_logger.addHandler(queue_handler)
+
+# Настройка логгеров FastAPI и Uvicorn
+logging.getLogger("fastapi").handlers = [queue_handler]
+logging.getLogger("uvicorn").handlers = [queue_handler]
+logging.getLogger("uvicorn.access").handlers = [queue_handler]
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +57,6 @@ README_PATH = Path(__file__).parent.parent / "readme.md"
 cached_content = None
 last_modified = None
 
-
 def get_readme_html():
     global cached_content, last_modified
     current_modified = os.path.getmtime(README_PATH)
@@ -49,7 +70,6 @@ def get_readme_html():
         except FileNotFoundError:
             cached_content = "<h1>Документация не найдена</h1>"
     return cached_content
-
 
 # Добавляем middleware CORS
 app.add_middleware(
@@ -68,6 +88,7 @@ app.add_middleware(
 # Создаем директорию static, если её нет
 static_dir = Path("static")
 static_dir.mkdir(exist_ok=True)
+
 # Подключаем статические файлы
 @app.get("/static/{path:path}")
 async def serve_static(path: str, request: Request):
@@ -78,7 +99,6 @@ async def serve_static(path: str, request: Request):
     response = FileResponse(file_path)
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response
-
 
 # Главная страница с README
 @app.get("/", response_class=HTMLResponse)
@@ -130,7 +150,6 @@ async def read_root(request: Request):
     </html>
     """
 
-
 # Подключаем маршруты
 from app.api.endpoints.map import campus, building, floor, room, segment, connection, outdoor_segment, route, enum
 from app.api.endpoints.users import auth
@@ -146,5 +165,4 @@ app.include_router(auth.router)
 app.include_router(route.router)
 app.include_router(enum.router)
 
-# Тестовое сообщение для проверки логирования
 logger.info("Application started successfully")

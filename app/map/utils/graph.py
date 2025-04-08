@@ -1,98 +1,37 @@
 # app/map/utils/graph.py
-from collections import defaultdict
+from typing import Dict, List, Tuple
 from math import sqrt
-
 
 class Graph:
     def __init__(self):
-        self.edges = defaultdict(list)  # {вершина: [(сосед, вес, координаты)]}
-        self.vertices = {}              # {вершина: (x, y, floor)}
-        self.landmarks = []            # Список ориентиров
+        # Словарь вершин: vertex -> (x, y, floor)
+        self.vertices: Dict[str, Tuple[float, float, int]] = {}
+        # Словарь рёбер: vertex -> [(neighbor, weight, (x, y, floor))]
+        self.edges: Dict[str, List[Tuple[str, float, Tuple[float, float, int]]]] = {}
+        # Список ориентиров для ALT (A* с ориентирами), пока не используем
+        self.landmarks: List[str] = []
 
-    def add_edge(self, from_vertex, to_vertex, weight, from_coords, to_coords, connection_type=None):
-        """
-        Добавляет ребро в граф.
-        Проверяет этажи, но пропускает проверку для соединений типа "stair" и "outdoor".
-        """
-        try:
-            if not isinstance(from_coords, tuple) or not isinstance(to_coords, tuple):
-                raise ValueError("Координаты должны быть кортежами")
+    def add_vertex(self, vertex: str, coords: Tuple[float, float, int]) -> None:
+        """Добавление вершины в граф"""
+        if vertex not in self.vertices:
+            self.vertices[vertex] = coords
+            self.edges[vertex] = []
 
-            # Проверяем этажи, если это не "stair" и не "outdoor"
-            if connection_type not in ["stair", "outdoor"] and from_coords[2] != to_coords[2] and from_coords[2] != "outdoor" and to_coords[2] != "outdoor":
-                raise ValueError(f"Cannot add edge between vertices on different floors: {from_coords[2]} and {to_coords[2]}")
+    def add_edge(self, from_vertex: str, to_vertex: str, weight: float) -> None:
+        """Добавление ребра в граф (двунаправленное)"""
+        if from_vertex not in self.vertices:
+            raise ValueError(f"Вершина {from_vertex} не найдена в графе")
+        if to_vertex not in self.vertices:
+            raise ValueError(f"Вершина {to_vertex} не найдена в графе")
+        # Добавляем ребро from_vertex -> to_vertex
+        self.edges[from_vertex].append((to_vertex, weight, self.vertices[to_vertex]))
+        # Добавляем обратное ребро to_vertex -> from_vertex
+        self.edges[to_vertex].append((from_vertex, weight, self.vertices[from_vertex]))
 
-            # Добавляем ребро в граф
-            self.edges[from_vertex].append((to_vertex, weight, to_coords))
-            self.edges[to_vertex].append((from_vertex, weight, from_coords))
-
-            # Сохраняем координаты вершин
-            self.vertices[from_vertex] = from_coords
-            self.vertices[to_vertex] = to_coords
-
-        except Exception as e:
-            print(f"[add_edge] Ошибка при добавлении ребра {from_vertex} -> {to_vertex}: {e}")
-            raise  # Перебрасываем исключение, чтобы не скрывать ошибки
-
-    def set_landmarks(self, landmarks):
-        """Задает ориентиры (landmarks)."""
-        try:
-            if not isinstance(landmarks, list):
-                raise ValueError("Ориентиры должны быть списком")
-            self.landmarks = landmarks
-        except Exception as e:
-            print(f"[set_landmarks] Ошибка при установке ориентиров: {e}")
-            raise
-
-    def landmark_heuristic(self, a, b):
-        """Эвристика ALT: максимальное расстояние по ориентирам."""
-        try:
-            a_coords = self.vertices[a]
-            b_coords = self.vertices[b]
-            return max(abs(a_coords[0] - b_coords[0]), abs(a_coords[1] - b_coords[1]))
-        except KeyError as e:
-            print(f"[landmark_heuristic] Вершина не найдена: {e}")
-            return float('inf')
-        except Exception as e:
-            print(f"[landmark_heuristic] Ошибка при вычислении эвристики между {a} и {b}: {e}")
-            return float('inf')
-
-    def find_path(self, start, end):
-        """
-        Находит кратчайший путь между start и end с помощью алгоритма Dijkstra.
-        """
-        if start not in self.vertices or end not in self.vertices:
-            print(f"[find_path] Одна из вершин не найдена: start={start}, end={end}")
-            return None
-
-        from heapq import heappush, heappop
-
-        # Очередь с приоритетами: (g_score, вершина, путь)
-        queue = [(0, start, [start])]
-        distances = {start: 0}  # Расстояние от start до текущей вершины
-        visited = set()
-
-        while queue:
-            dist, current, path = heappop(queue)
-
-            if current in visited:
-                continue
-
-            if current == end:
-                return path
-
-            visited.add(current)
-
-            for neighbor, weight, _ in self.edges[current]:
-                if neighbor in visited:
-                    continue
-
-                new_dist = distances[current] + weight
-
-                if neighbor not in distances or new_dist < distances[neighbor]:
-                    distances[neighbor] = new_dist
-                    new_path = path + [neighbor]
-                    heappush(queue, (new_dist, neighbor, new_path))
-
-        print(f"[find_path] Путь от {start} до {end} не найден")
-        return None
+    def landmark_heuristic(self, a: str, b: str) -> float:
+        """Эвристика на основе ориентиров (landmarks) для ALT"""
+        if not self.landmarks:
+            return 0.0
+        # Для простоты возвращаем 0, так как ориентиры пока не используются
+        # В будущем можно реализовать полноценную эвристику на основе ориентиров
+        return 0.0
