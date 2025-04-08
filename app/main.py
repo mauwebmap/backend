@@ -1,3 +1,5 @@
+# main.py
+import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -6,6 +8,18 @@ from pathlib import Path
 import markdown
 import os
 from starlette.responses import Response
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.DEBUG,  # Уровень логирования (DEBUG, чтобы видеть все сообщения)
+    format='%(asctime)s [%(levelname)s] %(message)s',  # Формат логов
+    handlers=[
+        logging.StreamHandler(),  # Вывод в stdout (перенаправляется systemd в /var/log/myapp.log)
+        logging.FileHandler("/var/log/myapp.log")  # Дополнительно записываем в файл
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     swagger_ui_init_oauth={
@@ -131,3 +145,6 @@ app.include_router(outdoor_segment.router)
 app.include_router(auth.router)
 app.include_router(route.router)
 app.include_router(enum.router)
+
+# Тестовое сообщение для проверки логирования
+logger.info("Application started successfully")
