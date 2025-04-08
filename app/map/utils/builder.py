@@ -6,6 +6,9 @@ from app.map.models.connection import Connection
 from app.map.models.outdoor_segment import OutdoorSegment
 from app.map.utils.graph import Graph
 from math import sqrt
+import logging
+
+logger = logging.getLogger(__name__)
 
 VALID_TYPES = {"room", "segment", "outdoor"}
 
@@ -115,16 +118,9 @@ def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
 
 
 def build_graph(db: Session, start: str, end: str) -> Graph:
-    """
-    Строит граф для маршрута от start до end.
-    """
     graph = Graph()
-
-    # Добавляем стартовую и конечную точки
     add_vertex_to_graph(graph, db, start)
     add_vertex_to_graph(graph, db, end)
-
-    # Определяем здания и этажи
     building_ids = get_relevant_buildings(db, start, end)
     floor_ids = get_relevant_floors(db, start, end)
 
@@ -224,7 +220,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         graph.add_edge(from_key, to_key, conn.weight, from_coords, to_coords, conn.type)
 
     # Отладочный вывод
-    print("Vertices:", graph.vertices)
-    print("Edges:", graph.edges)
-
+    logger.debug(f"Vertices: {graph.vertices}")
+    logger.debug(f"Edges: {dict(graph.edges)}")
     return graph

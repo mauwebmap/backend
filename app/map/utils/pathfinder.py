@@ -1,7 +1,9 @@
 # app/map/utils/pathfinder.py
 import heapq
 from math import sqrt
+import logging
 
+logger = logging.getLogger(__name__)
 
 def a_star(graph, start, goals):
     """Находит кратчайший путь, используя A* + ALT"""
@@ -14,10 +16,10 @@ def a_star(graph, start, goals):
         return sqrt((xa - xb) ** 2 + (ya - yb) ** 2)
 
     if start not in graph.vertices:
-        print(f"[a_star] Start vertex {start} not in graph.vertices")
+        logger.error(f"[a_star] Start vertex {start} not in graph.vertices")
         return None, None
     if not all(goal in graph.vertices for goal in goals):
-        print(f"[a_star] One of the goals {goals} not in graph.vertices")
+        logger.error(f"[a_star] One of the goals {goals} not in graph.vertices")
         return None, None
 
     open_set = [(0, start)]  # (f_score, vertex)
@@ -26,17 +28,19 @@ def a_star(graph, start, goals):
     f_score = {start: min(heuristic(start, goal) for goal in goals)}
     open_set_dict = {start: f_score[start]}  # Для быстрого поиска вершин в open_set
 
-    print(f"[a_star] Starting A* from {start} to {goals}")
-    print(f"[a_star] Initial f_score[{start}] = {f_score[start]}")
+    logger.debug(f"[a_star] Starting A* from {start} to {goals}")
+    logger.debug(f"[a_star] Initial f_score[{start}] = {f_score[start]}")
+    logger.debug(f"[a_star] Graph vertices: {graph.vertices}")
+    logger.debug(f"[a_star] Graph edges: {dict(graph.edges)}")
 
     while open_set:
         f, current = heapq.heappop(open_set)
         if current not in open_set_dict:
-            print(f"[a_star] Skipping vertex {current} (already processed)")
+            logger.debug(f"[a_star] Skipping vertex {current} (already processed)")
             continue
         del open_set_dict[current]
 
-        print(f"[a_star] Processing vertex: {current}, f_score = {f_score[current]}")
+        logger.debug(f"[a_star] Processing vertex: {current}, f_score = {f_score[current]}")
 
         if current in goals:
             path = []
@@ -46,11 +50,16 @@ def a_star(graph, start, goals):
             path.append(start)
             path.reverse()
 
-            print(f"[a_star] Path found: {path}")
+            logger.debug(f"[a_star] Path found: {path}")
             return path, g_score[path[-1]]
 
-        for neighbor, weight, neighbor_coords in graph.edges.get(current, []):
+        neighbors = graph.edges.get(current, [])
+        if not neighbors:
+            logger.debug(f"[a_star] No neighbors for vertex {current}")
+        for neighbor, weight, neighbor_coords in neighbors:
             tentative_g_score = g_score[current] + weight
+
+            logger.debug(f"[a_star] Considering neighbor {neighbor} of {current}, weight = {weight}, tentative_g_score = {tentative_g_score}")
 
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
@@ -62,7 +71,9 @@ def a_star(graph, start, goals):
                     heapq.heapify(open_set)
                 heapq.heappush(open_set, (f_score[neighbor], neighbor))
                 open_set_dict[neighbor] = f_score[neighbor]
-                print(f"[a_star] Added/Updated neighbor: {neighbor}, g_score = {g_score[neighbor]}, f_score = {f_score[neighbor]}")
+                logger.debug(f"[a_star] Added/Updated neighbor: {neighbor}, g_score = {g_score[neighbor]}, f_score = {f_score[neighbor]}")
+            else:
+                logger.debug(f"[a_star] Skipped neighbor {neighbor}: g_score {g_score.get(neighbor)} <= tentative_g_score {tentative_g_score}")
 
-    print(f"[a_star] Путь от {start} до {goals} не найден")
+    logger.warning(f"[a_star] Path from {start} to {goals} not found")
     return None, None
