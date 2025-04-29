@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, List
 from fastapi import UploadFile, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
