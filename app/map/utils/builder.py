@@ -281,6 +281,32 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_edge(pv1, pv2, weight)
                 logger.debug(f"[build_graph] Direct connection between phantom vertices: {pv1} -> {pv2}, weight={weight}")
 
+    # Соединяем точки перехода (после лестницы) с фантомными точками на том же этаже
+    for conn in connections:
+        if conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
+            from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
+            to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
+            if not from_segment or not to_segment:
+                continue
+            # Точка входа на следующем этаже
+            entry_point = f"segment_{conn.to_segment_id}_start"
+            entry_floor = to_segment.floor_id
+
+            # Находим все фантомные точки на этом этаже
+            for pv in phantom_vertices:
+                pv_segment_id = int(pv.split("_")[4])
+                pv_segment = db.query(Segment).filter(Segment.id == pv_segment_id).first()
+                if not pv_segment:
+                    continue
+                if pv_segment.floor_id == entry_floor and pv_segment_id != conn.to_segment_id:
+                    # Соединяем точку входа с фантомной точкой напрямую
+                    weight = sqrt(
+                        (graph.vertices[entry_point][0] - graph.vertices[pv][0]) ** 2 +
+                        (graph.vertices[entry_point][1] - graph.vertices[pv][1]) ** 2
+                    )
+                    graph.add_edge(entry_point, pv, weight)
+                    logger.debug(f"[build_graph] Direct connection from transition entry {entry_point} to phantom vertex {pv}, weight={weight}")
+
     logger.debug(f"Vertices: {graph.vertices}")
     logger.debug(f"Edges: {dict(graph.edges)}")
     return graph
