@@ -151,7 +151,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(start_vertex, (segment.start_x, segment.start_y, segment.floor_id))
         if end_vertex not in graph.vertices:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
-        weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.end_y) ** 2)
+        weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
         logger.debug(f"[build_graph] Added segment vertices: {start_vertex} -> {(segment.start_x, segment.start_y, segment.floor_id)}, {end_vertex} -> {(segment.end_x, segment.end_y, segment.floor_id)}")
         logger.debug(f"[build_graph] Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
@@ -181,6 +181,13 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         (Connection.to_outdoor_id.in_([o.id for o in outdoor_segments]))
     ).all()
     logger.debug(f"[build_graph] Loaded connections: {[f'id={conn.id}, type={conn.type}, room_id={conn.room_id}, segment_id={conn.segment_id}, from_segment_id={conn.from_segment_id}, to_segment_id={conn.to_segment_id}' for conn in connections]}")
+
+    # Список сегментов, участвующих в переходах (лестницах)
+    transition_segments = set()
+    for conn in connections:
+        if conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
+            transition_segments.add(conn.from_segment_id)
+            transition_segments.add(conn.to_segment_id)
 
     # Добавление рёбер на основе соединений
     for conn in connections:
@@ -219,13 +226,14 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom)
             logger.debug(f"[build_graph] Adding edge: {room_vertex} -> {phantom_vertex}, weight={dist_to_phantom}, from_coords={room_coords}, to_coords={phantom_coords}")
 
-            # Соединяем фантомную точку с началом и концом сегмента
-            dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
-            dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
-            graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
-            graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
-            logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_start}, weight={dist_phantom_to_start}")
-            logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_end}, weight={dist_phantom_to_end}")
+            # Соединяем фантомную точку с началом и концом сегмента только если сегмент участвует в переходе
+            if conn.segment_id in transition_segments:
+                dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
+                dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
+                graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
+                graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
+                logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_start}, weight={dist_phantom_to_start}")
+                logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_end}, weight={dist_phantom_to_end}")
 
         # Соединение между сегментами (лестница)
         elif conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
@@ -257,27 +265,21 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_edge(from_vertex, to_vertex, weight)
             logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
 
-    # Соединяем фантомные точки напрямую, если они на одном сегменте и сегмент не участвует в переходе между этажами
+    # Соединяем фантомные точки напрямую, если они на одном сегменте и сегмент не участвует в переходе
     phantom_vertices = [v for v in graph.vertices if v.startswith("phantom_")]
     for i, pv1 in enumerate(phantom_vertices):
         for pv2 in phantom_vertices[i + 1:]:
             # Извлекаем segment_id из названий вершин
             segment_id1 = int(pv1.split("_")[4])
             segment_id2 = int(pv2.split("_")[4])
-            if segment_id1 == segment_id2:  # Если обе фантомные точки на одном сегменте
-                # Проверяем, участвует ли сегмент в переходе между этажами (лестница)
-                is_transition = db.query(Connection).filter(
-                    Connection.type == "лестница",
-                    (Connection.from_segment_id == segment_id1) | (Connection.to_segment_id == segment_id1)
-                ).first()
-                if not is_transition:
-                    # Соединяем фантомные точки напрямую
-                    weight = sqrt(
-                        (graph.vertices[pv1][0] - graph.vertices[pv2][0]) ** 2 +
-                        (graph.vertices[pv1][1] - graph.vertices[pv2][1]) ** 2
-                    )
-                    graph.add_edge(pv1, pv2, weight)
-                    logger.debug(f"[build_graph] Direct connection between phantom vertices: {pv1} -> {pv2}, weight={weight}")
+            if segment_id1 == segment_id2 and segment_id1 not in transition_segments:
+                # Соединяем фантомные точки напрямую
+                weight = sqrt(
+                    (graph.vertices[pv1][0] - graph.vertices[pv2][0]) ** 2 +
+                    (graph.vertices[pv1][1] - graph.vertices[pv2][1]) ** 2
+                )
+                graph.add_edge(pv1, pv2, weight)
+                logger.debug(f"[build_graph] Direct connection between phantom vertices: {pv1} -> {pv2}, weight={weight}")
 
     logger.debug(f"Vertices: {graph.vertices}")
     logger.debug(f"Edges: {dict(graph.edges)}")
