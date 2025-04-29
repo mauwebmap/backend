@@ -119,7 +119,6 @@ def get_relevant_floors(db: Session, start: str, end: str) -> set:
     return floor_ids
 
 def build_graph(db: Session, start: str, end: str) -> Graph:
-    """Построение графа для поиска пути с фантомными точками"""
     graph = Graph()
     add_vertex_to_graph(graph, db, start)
     add_vertex_to_graph(graph, db, end)
@@ -142,7 +141,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     # Загрузка всех сегментов в зданиях и на этажах
     segments = db.query(Segment).filter(
         Segment.building_id.in_(building_ids),
-        Room.floor_id.in_(floor_ids)
+        Segment.floor_id.in_(floor_ids)  # Исправлено: добавлено условие
     ).all()
     logger.debug(f"[build_graph] Loaded segments: {[f'id={segment.id}, building_id={segment.building_id}, floor_id={segment.floor_id}' for segment in segments]}")
     for segment in segments:
