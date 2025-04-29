@@ -31,8 +31,11 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     current_floor_number = None
     floor_points = []
     last_point = None
-    prev_vertex = None  # Для отслеживания предыдущей вершины
-    transition_points = []  # Для хранения точек перехода между этажами
+    prev_vertex = None
+    transition_points = []
+
+    # Для отслеживания добавленных точек и избежания дубликатов
+    added_points = set()
 
     for i, vertex in enumerate(path):
         try:
@@ -102,22 +105,20 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             # Проверяем, нужно ли пропустить вершину (для соседних комнат)
             skip_vertex = False
             if prev_vertex and vertex.startswith("segment_"):
-                # Проверяем, идём ли мы от одной фантомной точки к другой через сегмент
                 if prev_vertex.startswith("phantom_") and i + 1 < len(path):
                     next_vertex = path[i + 1]
                     if next_vertex.startswith("phantom_"):
-                        # Пропускаем промежуточные точки сегмента
                         skip_vertex = True
                         logger.debug(f"Skipping segment vertex {vertex} between phantom points")
 
             # Формируем точку
             point = {"x": coords[0], "y": coords[1]}
+            point_tuple = (coords[0], coords[1])  # Для проверки дубликатов
 
             # Проверяем, является ли текущая вершина частью перехода между этажами
             if prev_vertex and vertex.startswith("segment_") and prev_vertex.startswith("segment_"):
                 prev_segment_id = int(prev_vertex.split("_")[1])
                 curr_segment_id = int(vertex.split("_")[1])
-                # Проверяем, есть ли соединение типа "лестница" между этими сегментами
                 from app.map.models.connection import Connection
                 connection = db.query(Connection).filter(
                     Connection.type == "лестница",
@@ -125,7 +126,6 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     ((Connection.from_segment_id == curr_segment_id) & (Connection.to_segment_id == prev_segment_id))
                 ).first()
                 if connection:
-                    # Добавляем обе точки текущего и предыдущего сегмента
                     prev_segment = db.query(Segment).filter(Segment.id == prev_segment_id).first()
                     curr_segment = db.query(Segment).filter(Segment.id == curr_segment_id).first()
                     transition_points = [
@@ -140,20 +140,38 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             # Добавляем точку в маршрут
             if current_floor_number is None:  # Первый этаж
                 current_floor_number = floor_number
-                floor_points.append(point)
+                if point_tuple not in added_points:
+                    floor_points.append(point)
+                    added_points.add(point_tuple)
             elif floor_number != current_floor_number:  # Смена этажа
                 if floor_points:
                     # Добавляем точки перехода на предыдущем этаже
                     if transition_points:
-                        floor_points.extend(transition_points[:2])  # Первые две точки (предыдущий сегмент)
-                        transition_points = transition_points[2:]  # Оставляем точки для следующего этажа
+                        for tp in transition_points[:2]:
+                            tp_tuple = (tp["x"], tp["y"])
+                            if tp_tuple not in added_points:
+                                floor_points.append(tp)
+                                added_points.add(tp_tuple)
+                        transition_points = transition_points[2:]
                     route.append({"floor": current_floor_number, "points": floor_points})
                 # Создаём новый список точек
-                floor_points = transition_points if transition_points else [last_point] if last_point else []
-                floor_points.append(point)
+                added_points.clear()  # Очищаем для нового этажа
+                floor_points = []
+                if transition_points:
+                    for tp in transition_points:
+                        tp_tuple = (tp["x"], tp["y"])
+                        if tp_tuple not in added_points:
+                            floor_points.append(tp)
+                            added_points.add(tp_tuple)
+                    transition_points = []
+                if point_tuple not in added_points:
+                    floor_points.append(point)
+                    added_points.add(point_tuple)
                 current_floor_number = floor_number
             elif not skip_vertex:  # Добавляем точку, если не пропускаем
-                floor_points.append(point)
+                if point_tuple not in added_points:
+                    floor_points.append(point)
+                    added_points.add(point_tuple)
 
             last_point = point
             prev_vertex = vertex

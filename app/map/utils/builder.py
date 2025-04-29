@@ -141,7 +141,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     # Загрузка всех сегментов в зданиях и на этажах
     segments = db.query(Segment).filter(
         Segment.building_id.in_(building_ids),
-        Segment.floor_id.in_(floor_ids)  # Исправлено: добавлено условие
+        Segment.floor_id.in_(floor_ids)
     ).all()
     logger.debug(f"[build_graph] Loaded segments: {[f'id={segment.id}, building_id={segment.building_id}, floor_id={segment.floor_id}' for segment in segments]}")
     for segment in segments:
@@ -151,7 +151,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(start_vertex, (segment.start_x, segment.start_y, segment.floor_id))
         if end_vertex not in graph.vertices:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
-        weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
+        weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.end_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
         logger.debug(f"[build_graph] Added segment vertices: {start_vertex} -> {(segment.start_x, segment.start_y, segment.floor_id)}, {end_vertex} -> {(segment.end_x, segment.end_y, segment.floor_id)}")
         logger.debug(f"[build_graph] Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
@@ -256,6 +256,28 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 continue
             graph.add_edge(from_vertex, to_vertex, weight)
             logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
+
+    # Соединяем фантомные точки напрямую, если они на одном сегменте и сегмент не участвует в переходе между этажами
+    phantom_vertices = [v for v in graph.vertices if v.startswith("phantom_")]
+    for i, pv1 in enumerate(phantom_vertices):
+        for pv2 in phantom_vertices[i + 1:]:
+            # Извлекаем segment_id из названий вершин
+            segment_id1 = int(pv1.split("_")[4])
+            segment_id2 = int(pv2.split("_")[4])
+            if segment_id1 == segment_id2:  # Если обе фантомные точки на одном сегменте
+                # Проверяем, участвует ли сегмент в переходе между этажами (лестница)
+                is_transition = db.query(Connection).filter(
+                    Connection.type == "лестница",
+                    (Connection.from_segment_id == segment_id1) | (Connection.to_segment_id == segment_id1)
+                ).first()
+                if not is_transition:
+                    # Соединяем фантомные точки напрямую
+                    weight = sqrt(
+                        (graph.vertices[pv1][0] - graph.vertices[pv2][0]) ** 2 +
+                        (graph.vertices[pv1][1] - graph.vertices[pv2][1]) ** 2
+                    )
+                    graph.add_edge(pv1, pv2, weight)
+                    logger.debug(f"[build_graph] Direct connection between phantom vertices: {pv1} -> {pv2}, weight={weight}")
 
     logger.debug(f"Vertices: {graph.vertices}")
     logger.debug(f"Edges: {dict(graph.edges)}")
