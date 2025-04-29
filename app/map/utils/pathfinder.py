@@ -1,11 +1,13 @@
-# app/map/utils/pathfinder.py
+# app/map/pathfinder/pathfinder.py
 import heapq
 from math import sqrt
 import logging
+from sqlalchemy.orm import Session
+from app.map.utils.builder import build_graph, Graph
 
 logger = logging.getLogger(__name__)
 
-def a_star(graph, start, goals):
+def a_star(graph: Graph, start: str, goals: list) -> tuple:
     """Находит кратчайший путь, используя A* + ALT"""
     def heuristic(a, b):
         """Эвристика: евклидово расстояние (если нет ориентиров)"""
@@ -77,3 +79,32 @@ def a_star(graph, start, goals):
 
     logger.warning(f"[a_star] Path from {start} to {goals} not found")
     return None, None
+
+def find_path(db: Session, start: str, end: str, return_graph: bool = False) -> tuple:
+    """
+    Находит кратчайший путь между start и end.
+    Args:
+        db: Сессия базы данных
+        start: Начальная вершина (например, "room_1")
+        end: Конечная вершина (например, "room_2")
+        return_graph: Если True, возвращает также граф
+    Returns:
+        (path, weight, graph) если return_graph=True, иначе (path, weight)
+    """
+    logger.debug(f"Start vertex: {start}")
+    logger.debug(f"End vertex: {end}")
+
+    # Построение графа
+    graph = build_graph(db, start, end)
+    logger.info("Graph built successfully")
+
+    # Поиск пути с помощью A*
+    goals = [end] if isinstance(end, str) else end
+    path, weight = a_star(graph, start, goals)
+
+    if path is None:
+        logger.warning(f"No path found from {start} to {end}")
+        return (None, None, graph) if return_graph else (None, None)
+
+    logger.info(f"A* result: path={path}, weight={weight}")
+    return (path, weight, graph) if return_graph else (path, weight)
