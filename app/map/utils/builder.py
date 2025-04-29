@@ -49,8 +49,9 @@ def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tu
     px = rx - sx
     py = ry - sy
 
-    # Скалярное произведение (для нахождения проекции)
-    t = (px * dx + py * dy) / length_squared
+    # Скалярное произведение для нахождения параметра t проекции
+    dot_product = px * dx + py * dy
+    t = dot_product / length_squared
 
     # Ограничиваем t в диапазоне [0, 1], чтобы точка была на сегменте
     t = max(0, min(1, t))
@@ -141,7 +142,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     # Загрузка всех сегментов в зданиях и на этажах
     segments = db.query(Segment).filter(
         Segment.building_id.in_(building_ids),
-        Segment.floor_id.in_(floor_ids)
+        Room.floor_id.in_(floor_ids)
     ).all()
     logger.debug(f"[build_graph] Loaded segments: {[f'id={segment.id}, building_id={segment.building_id}, floor_id={segment.floor_id}' for segment in segments]}")
     for segment in segments:
