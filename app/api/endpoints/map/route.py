@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database.database import get_db
-from app.map.pathfinder.pathfinder import find_path
+from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
 from app.map.models.outdoor_segment import OutdoorSegment
