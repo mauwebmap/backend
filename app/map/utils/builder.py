@@ -22,6 +22,45 @@ def parse_vertex_id(vertex: str):
     except (ValueError, IndexError) as e:
         raise ValueError(f"Неверный формат ID вершины {vertex}: {e}")
 
+def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tuple) -> tuple:
+    """
+    Находит ближайшую точку на сегменте (проекцию точки комнаты на линию сегмента).
+    room_coords: (x, y, floor) - координаты комнаты
+    segment_start: (x, y, floor) - начало сегмента
+    segment_end: (x, y, floor) - конец сегмента
+    Возвращает: (x, y, floor) - координаты фантомной точки
+    """
+    rx, ry, _ = room_coords
+    sx, sy, sfloor = segment_start
+    ex, ey, _ = segment_end
+
+    # Вектор сегмента
+    dx = ex - sx
+    dy = ey - sy
+
+    # Если сегмент - точка (начало и конец совпадают)
+    if dx == 0 and dy == 0:
+        return sx, sy, sfloor
+
+    # Длина сегмента (квадрат)
+    length_squared = dx * dx + dy * dy
+
+    # Вектор от начала сегмента к точке комнаты
+    px = rx - sx
+    py = ry - sy
+
+    # Скалярное произведение (для нахождения проекции)
+    t = (px * dx + py * dy) / length_squared
+
+    # Ограничиваем t в диапазоне [0, 1], чтобы точка была на сегменте
+    t = max(0, min(1, t))
+
+    # Координаты проекции
+    phantom_x = sx + t * dx
+    phantom_y = sy + t * dy
+
+    return phantom_x, phantom_y, sfloor
+
 def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
     """Добавление вершины в граф"""
     type_, id_ = parse_vertex_id(vertex)
@@ -79,7 +118,7 @@ def get_relevant_floors(db: Session, start: str, end: str) -> set:
     return floor_ids
 
 def build_graph(db: Session, start: str, end: str) -> Graph:
-    """Построение графа для поиска пути"""
+    """Построение графа для поиска пути с фантомными точками"""
     graph = Graph()
     add_vertex_to_graph(graph, db, start)
     add_vertex_to_graph(graph, db, end)
@@ -148,7 +187,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         logger.debug(f"[build_graph] Processing connection: id={conn.id}, type={conn.type}, room_id={conn.room_id}, segment_id={conn.segment_id}, from_segment_id={conn.from_segment_id}, to_segment_id={conn.to_segment_id}")
         weight = conn.weight if conn.weight is not None else 1
 
-        if conn.type.lower() == "door" and conn.room_id and conn.segment_id:
+        # Соединение между комнатой и сегментом (дверь)
+        if conn.type == "дверь" and conn.room_id and conn.segment_id:
             room_vertex = f"room_{conn.room_id}"
             segment = db.query(Segment).filter(Segment.id == conn.segment_id).first()
             if not segment:
@@ -163,18 +203,32 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 logger.warning(f"[build_graph] Segment vertices {segment_start} or {segment_end} not in graph for connection {conn.id}")
                 continue
 
+            # Находим фантомную точку на сегменте
             room_coords = graph.vertices[room_vertex]
             start_coords = graph.vertices[segment_start]
             end_coords = graph.vertices[segment_end]
-            dist_to_start = sqrt((room_coords[0] - start_coords[0]) ** 2 + (room_coords[1] - start_coords[1]) ** 2)
-            dist_to_end = sqrt((room_coords[0] - end_coords[0]) ** 2 + (room_coords[1] - end_coords[1]) ** 2)
-            target_vertex = segment_start if dist_to_start <= dist_to_end else segment_end
-            target_coords = start_coords if dist_to_start <= dist_to_end else end_coords
+            phantom_coords = find_phantom_point(room_coords, start_coords, end_coords)
 
-            graph.add_edge(room_vertex, target_vertex, weight)
-            logger.debug(f"[build_graph] Adding edge: {room_vertex} -> {target_vertex}, weight={weight}, from_coords={room_coords}, to_coords={target_coords}")
+            # Добавляем фантомную точку как новую вершину
+            phantom_vertex = f"phantom_room_{conn.room_id}_segment_{conn.segment_id}"
+            graph.add_vertex(phantom_vertex, phantom_coords)
+            logger.debug(f"[build_graph] Added phantom vertex: {phantom_vertex} -> {phantom_coords}")
 
-        elif conn.type.lower() == "stairs" and conn.from_segment_id and conn.to_segment_id:
+            # Соединяем комнату с фантомной точкой
+            dist_to_phantom = sqrt((room_coords[0] - phantom_coords[0]) ** 2 + (room_coords[1] - phantom_coords[1]) ** 2)
+            graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom)
+            logger.debug(f"[build_graph] Adding edge: {room_vertex} -> {phantom_vertex}, weight={dist_to_phantom}, from_coords={room_coords}, to_coords={phantom_coords}")
+
+            # Соединяем фантомную точку с началом и концом сегмента
+            dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
+            dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
+            graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
+            graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
+            logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_start}, weight={dist_phantom_to_start}")
+            logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_end}, weight={dist_phantom_to_end}")
+
+        # Соединение между сегментами (лестница)
+        elif conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
             if not from_segment or not to_segment:
@@ -188,7 +242,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_edge(from_vertex, to_vertex, weight)
             logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
 
-        elif conn.type.lower() == "outdoor" and conn.from_segment_id and conn.to_outdoor_id:
+        # Соединение между сегментом и уличным сегментом (улица)
+        elif conn.type == "улица" and conn.from_segment_id and conn.to_outdoor_id:
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == conn.to_outdoor_id).first()
             if not from_segment or not to_outdoor:
