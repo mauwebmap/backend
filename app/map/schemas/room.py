@@ -46,5 +46,15 @@ class RoomResponse(RoomBase):
     connections: List[ConnectionCreate] = Field([], description="Список соединений с коридорами")
     image_path: Optional[str] = Field(None, description="Путь к изображению комнаты")
 
+class RoomSearchResponse(BaseModel):
+    id: int
+    name: str
+    cab_id: str
+    building_id: int
+    building_name: str  # Название здания
+    floor_id: int
+    cab_x: Optional[float] = None
+    cab_y: Optional[float] = None
+    description: Optional[str] = None
     class Config:
         from_attributes = True

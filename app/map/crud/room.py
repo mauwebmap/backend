@@ -2,6 +2,7 @@ import os
 from typing import Optional
 from fastapi import UploadFile, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
 from app.map.models.room import Room
 from app.map.models.building import Building
 from app.map.models.floor import Floor
@@ -30,6 +31,43 @@ def get_rooms_by_floor_and_campus(db: Session, floor_id: int, campus_id: int):
         .filter(Floor.id == floor_id, Building.campus_id == campus_id)
         .all()
     )
+
+def search_rooms_by_name_or_cab_id(db: Session, query: str, campus_id: Optional[int] = None) -> List[Room]:
+    """
+    Ищет комнаты по названию (name) или номеру кабинета (cab_id) с учётом кампуса.
+    Возвращает список комнат с JOIN на таблицу Building для получения имени здания.
+    """
+    try:
+        # Разбиваем строку запроса на части (для поиска по словам)
+        search_terms = query.strip().split()
+        conditions = []
+
+        # Формируем условия поиска: совпадение по name или cab_id
+        for term in search_terms:
+            term = f"%{term}%"  # Для частичного совпадения
+            conditions.append(or_(
+                Room.name.ilike(term),  # Поиск по имени (без учёта регистра)
+                Room.cab_id.ilike(term)  # Поиск по номеру кабинета (без учёта регистра)
+            ))
+
+        # Если указан campus_id, добавляем фильтр по кампусу
+        query = (
+            db.query(Room)
+            .join(Floor, Floor.id == Room.floor_id)
+            .join(Building, Building.id == Floor.building_id)
+        )
+
+        if campus_id is not None:
+            query = query.filter(Building.campus_id == campus_id)
+
+        # Применяем условия поиска
+        if conditions:
+            query = query.filter(and_(*conditions))
+
+        rooms = query.all()
+        return rooms if rooms else []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при поиске комнат: {str(e)}")
 
 async def create_room(db: Session, room_data: RoomCreate, image_file: Optional[UploadFile] = None):
     # Исключаем connections из словаря, так как это не поле модели Room
