@@ -1,7 +1,7 @@
 # app/api/endpoints/map/route.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.db.session import get_db
+from app.database.database import get_db
 from app.map.pathfinder.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
