@@ -1,11 +1,12 @@
 # app/api/endpoints/map/route.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.database.database import get_db
+from app.db.session import get_db
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
 from app.map.models.outdoor_segment import OutdoorSegment
+from app.map.models.floor import Floor  # Добавляем импорт модели Floor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
     # Преобразуем путь в формат для фронта
     route = []
-    current_floor = None
+    current_floor_number = None  # Изменяем на current_floor_number
     floor_points = []
 
     for vertex in path:
@@ -42,13 +43,23 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 # Извлекаем координаты из графа
                 coords = graph.vertices[vertex]
                 floor_id = coords[2]
-                logger.debug(f"Processing phantom vertex {vertex}: floor_id={floor_id}, coords={coords}")
+                # Находим floor_number
+                if floor_id != 0:  # Для уличных сегментов floor_id=0
+                    floor = db.query(Floor).filter(Floor.id == floor_id).first()
+                    if not floor:
+                        raise ValueError(f"Этаж с id {floor_id} не найден")
+                    floor_number = floor.floor_number
+                else:
+                    floor_number = 0  # Уличные сегменты остаются с номером 0
+                logger.debug(
+                    f"Processing phantom vertex {vertex}: floor_id={floor_id}, floor_number={floor_number}, coords={coords}")
             else:
                 # Обычная вершина (room, segment, outdoor)
                 vertex_type, vertex_id_part = vertex.split("_", 1)
 
                 coords = None
                 floor_id = None
+                floor_number = None  # Добавляем floor_number
                 if vertex_type == "room":
                     vertex_id = int(vertex_id_part)
                     room = db.query(Room).filter(Room.id == vertex_id).first()
@@ -56,6 +67,11 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         raise ValueError(f"Комната {vertex} не найдена")
                     coords = (room.cab_x, room.cab_y)
                     floor_id = room.floor_id
+                    # Находим floor_number
+                    floor = db.query(Floor).filter(Floor.id == floor_id).first()
+                    if not floor:
+                        raise ValueError(f"Этаж с id {floor_id} не найден")
+                    floor_number = floor.floor_number
                 elif vertex_type == "segment":
                     # Разбираем segment_X_start/end
                     segment_id_part, position = vertex_id_part.rsplit("_", 1)
@@ -66,6 +82,11 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     coords = (segment.start_x, segment.start_y) if position == "start" else (
                     segment.end_x, segment.end_y)
                     floor_id = segment.floor_id
+                    # Находим floor_number
+                    floor = db.query(Floor).filter(Floor.id == floor_id).first()
+                    if not floor:
+                        raise ValueError(f"Этаж с id {floor_id} не найден")
+                    floor_number = floor.floor_number
                 elif vertex_type == "outdoor":
                     # Разбираем outdoor_X_start/end
                     outdoor_id_part, position = vertex_id_part.rsplit("_", 1)
@@ -76,17 +97,19 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     coords = (outdoor.start_x, outdoor.start_y) if position == "start" else (
                     outdoor.end_x, outdoor.end_y)
                     floor_id = 0  # Уличные сегменты на "нулевом" этаже
+                    floor_number = 0  # Уличные сегменты остаются с номером 0
                 else:
                     raise ValueError(f"Неизвестный тип вершины: {vertex_type}")
 
-                logger.debug(f"Processing vertex {vertex}: {vertex_type}, floor_id={floor_id}")
+                logger.debug(
+                    f"Processing vertex {vertex}: {vertex_type}, floor_id={floor_id}, floor_number={floor_number}")
 
             # Добавляем точку в маршрут
-            if floor_id != current_floor:
+            if floor_number != current_floor_number:  # Сравниваем по floor_number
                 if floor_points:
-                    route.append({"floor": current_floor, "points": floor_points})
+                    route.append({"floor": current_floor_number, "points": floor_points})
                 floor_points = []
-                current_floor = floor_id
+                current_floor_number = floor_number  # Обновляем current_floor_number
 
             floor_points.append({"x": coords[0], "y": coords[1]})
             logger.debug(f"Added point for vertex {vertex}: x={coords[0]}, y={coords[1]}")
@@ -96,6 +119,6 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             raise HTTPException(status_code=500, detail=f"Ошибка при обработке вершины {vertex}: {str(e)}")
 
     if floor_points:
-        route.append({"floor": current_floor, "points": floor_points})
+        route.append({"floor": current_floor_number, "points": floor_points})
 
     return {"path": route, "weight": weight}
