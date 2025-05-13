@@ -110,6 +110,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
     prev_coords = None
     prev_vertex = None
     prev_direction = None
+    prev_floor = None  # Initialize prev_floor to None
     current_instruction = []
 
     for i, vertex in enumerate(path):
@@ -133,10 +134,11 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
             initial_orientation = "налево"  # Предполагаем начальную ориентацию
             prev_coords = (coords[0], coords[1])
             prev_vertex = vertex
+            prev_floor = floor_number  # Set prev_floor for the first vertex
             continue
 
         # Проверяем переход между этажами
-        if prev_floor != floor_number and i > 1:
+        if prev_floor is not None and prev_floor != floor_number and i > 1:
             # Завершаем текущую инструкцию, если она есть
             if current_instruction:
                 instructions.append(" ".join(current_instruction))
