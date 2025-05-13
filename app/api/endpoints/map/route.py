@@ -15,15 +15,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-
 def get_direction(prev_coords: tuple, curr_coords: tuple, prev_direction: str = None,
-                  initial_orientation: str = "вперёд") -> str:
+                  initial_orientation: str = "вперёд", i: int = 0) -> str:
     """
     Определяет направление движения на основе смещения координат.
     prev_coords: (x, y) - предыдущая точка
     curr_coords: (x, y) - текущая точка
     prev_direction: Предыдущее направление (для оптимизации поворотов)
     initial_orientation: Начальная ориентация (по умолчанию "вперёд")
+    i: Индекс текущей вершины в пути
     Возвращает: "налево", "направо", "вперёд" или "назад"
     """
     dx = curr_coords[0] - prev_coords[0]
@@ -41,11 +41,11 @@ def get_direction(prev_coords: tuple, curr_coords: tuple, prev_direction: str = 
     if -45 <= angle <= 45:
         direction = "направо"  # Движение вправо (x увеличивается)
     elif 45 < angle <= 135:
-        direction = "вперёд"  # Движение вверх (y увеличивается)
+        direction = "вперёд"   # Движение вверх (y увеличивается)
     elif 135 < angle <= 180 or -180 <= angle < -135:
-        direction = "налево"  # Движение влево (x уменьшается)
+        direction = "налево"   # Движение влево (x уменьшается)
     else:
-        direction = "назад"  # Движение вниз (y уменьшается)
+        direction = "назад"    # Движение вниз (y уменьшается)
 
     # Корректировка для начальной ориентации (если указано "налево" в начале)
     if i == 1 and initial_orientation == "налево" and direction == "направо":
@@ -67,7 +67,6 @@ def get_direction(prev_coords: tuple, curr_coords: tuple, prev_direction: str = 
 
     return direction
 
-
 def get_vertex_details(vertex: str, db: Session) -> tuple:
     """
     Возвращает читаемое имя вершины и её номер (если есть).
@@ -84,7 +83,6 @@ def get_vertex_details(vertex: str, db: Session) -> tuple:
     elif vertex_type == "outdoor":
         return f"Уличный сегмент {vertex_id}", None
     return vertex, None
-
 
 def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
     """
@@ -152,7 +150,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
         # Определяем направление движения
         if prev_coords and not (prev_vertex.startswith("segment_") and vertex.startswith("segment_")):
             direction = get_direction(prev_coords, (coords[0], coords[1]), prev_direction,
-                                      initial_orientation if i == 1 else None)
+                                     initial_orientation if i == 1 else None, i)
             if direction != "вперёд" or not current_instruction:  # Добавляем поворот только если он не "вперёд" или это начало шага
                 if current_instruction and "поверните" in current_instruction[-1].lower():
                     instructions.append(" ".join(current_instruction))
@@ -172,7 +170,6 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
         prev_vertex = vertex
 
     return instructions
-
 
 @router.get("/route", response_model=dict)
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
