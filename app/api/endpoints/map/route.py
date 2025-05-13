@@ -1,17 +1,167 @@
 # app/api/endpoints/map/route.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.database.database import get_db
-from app.map.utils.pathfinder import find_path
+from app.db.session import get_db
+from app.map.pathfinder.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
 from app.map.models.outdoor_segment import OutdoorSegment
-from app.map.models.floor import Floor  # Добавляем импорт модели Floor
+from app.map.models.floor import Floor
+from app.map.models.connection import Connection
 import logging
+from math import atan2, degrees
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def get_direction(prev_coords: tuple, curr_coords: tuple, prev_direction: str = None) -> str:
+    """
+    Определяет направление движения на основе смещения координат.
+    prev_coords: (x, y) - предыдущая точка
+    curr_coords: (x, y) - текущая точка
+    prev_direction: Предыдущее направление (для оптимизации поворотов)
+    Возвращает: "налево", "направо", "вперёд" или "назад"
+    """
+    dx = curr_coords[0] - prev_coords[0]
+    dy = curr_coords[1] - prev_coords[1]
+
+    # Если нет смещения, считаем, что идём "вперёд"
+    if dx == 0 and dy == 0:
+        return "вперёд"
+
+    # Вычисляем угол в градусах
+    angle = degrees(atan2(dy, dx))
+
+    # Определяем направление
+    direction = None
+    if -45 <= angle <= 45:
+        direction = "направо"  # Движение вправо (x увеличивается)
+    elif 45 < angle <= 135:
+        direction = "вперёд"  # Движение вверх (y увеличивается)
+    elif 135 < angle <= 180 or -180 <= angle < -135:
+        direction = "налево"  # Движение влево (x уменьшается)
+    else:
+        direction = "назад"  # Движение вниз (y уменьшается)
+
+    # Оптимизация поворотов: если предыдущее направление противоположное, корректируем
+    if prev_direction:
+        if (prev_direction == "направо" and direction == "назад") or (
+                prev_direction == "назад" and direction == "направо"):
+            return "налево"
+        elif (prev_direction == "налево" and direction == "назад") or (
+                prev_direction == "назад" and direction == "налево"):
+            return "направо"
+        elif (prev_direction == "вперёд" and direction == "назад") or (
+                prev_direction == "назад" and direction == "вперёд"):
+            return "назад"
+
+    return direction
+
+
+def get_vertex_details(vertex: str, db: Session) -> tuple:
+    """
+    Возвращает читаемое имя вершины и её номер (если есть).
+    Возвращает: (имя, номер)
+    """
+    vertex_type, vertex_id = vertex.split("_", 1)
+    if vertex_type == "room":
+        room = db.query(Room).filter(Room.id == int(vertex_id)).first()
+        if room:
+            return room.name, room.cab_id
+        return vertex, None
+    elif vertex_type == "segment":
+        return "лестницы", None if "_end" in vertex or "_start" in vertex else vertex
+    elif vertex_type == "outdoor":
+        return f"Уличный сегмент {vertex_id}", None
+    return vertex, None
+
+
+def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
+    """
+    Генерирует текстовое описание пути в виде массива строк.
+    path: Список вершин маршрута
+    graph: Граф с координатами вершин
+    db: Сессия базы данных
+    Возвращает: Список инструкций (каждая строка — отдельный шаг)
+    """
+    instructions = []
+    prev_floor = None
+    prev_coords = None
+    prev_vertex = None
+    prev_direction = None
+    current_instruction = []
+
+    for i, vertex in enumerate(path):
+        # Получаем координаты текущей вершины
+        coords = graph.vertices[vertex]
+        floor_id = coords[2]
+
+        # Определяем этаж
+        if floor_id != 0:
+            floor = db.query(Floor).filter(Floor.id == floor_id).first()
+            floor_number = floor.floor_number if floor else floor_id
+        else:
+            floor_number = 0
+
+        # Получаем читаемое имя вершины и её номер
+        vertex_name, vertex_number = get_vertex_details(vertex, db)
+
+        # Начало маршрута
+        if i == 0:
+            current_instruction.append(f"При выходе из {vertex_name}")
+            prev_floor = floor_number
+            prev_coords = (coords[0], coords[1])
+            prev_vertex = vertex
+            continue
+
+        # Проверяем переход между этажами
+        if prev_floor != floor_number:
+            # Завершаем текущую инструкцию, если она есть
+            if current_instruction:
+                instructions.append(" ".join(current_instruction))
+                current_instruction = []
+
+            # Ищем соединение типа "лестница"
+            prev_segment_id = int(prev_vertex.split("_")[1]) if prev_vertex.startswith("segment_") else None
+            curr_segment_id = int(vertex.split("_")[1]) if vertex.startswith("segment_") else None
+            if prev_segment_id and curr_segment_id:
+                connection = db.query(Connection).filter(
+                    Connection.type == "лестница",
+                    ((Connection.from_segment_id == prev_segment_id) & (Connection.to_segment_id == curr_segment_id)) |
+                    ((Connection.from_segment_id == curr_segment_id) & (Connection.to_segment_id == prev_segment_id))
+                ).first()
+                if connection:
+                    if prev_floor < floor_number:
+                        instructions.append(f"Дойдите до лестницы и поднимитесь на {floor_number}-й этаж")
+                    else:
+                        instructions.append(f"Дойдите до лестницы и спуститесь на {floor_number}-й этаж")
+            prev_direction = None  # Сбрасываем направление после перехода
+
+        # Определяем направление движения
+        if prev_coords and not (prev_vertex.startswith("segment_") and vertex.startswith("segment_")):
+            direction = get_direction(prev_coords, (coords[0], coords[1]), prev_direction)
+            # Если это первый поворот после перехода или начала шага, добавляем "Поверните"
+            if not current_instruction or "поверните" not in current_instruction[-1].lower():
+                current_instruction.append(f"поверните {direction}")
+            else:
+                # Если уже есть поворот, начинаем новый шаг
+                instructions.append(" ".join(current_instruction))
+                current_instruction = [f"поверните {direction}"]
+            prev_direction = direction
+
+        # Если это последняя точка, указываем пункт назначения
+        if i == len(path) - 1:
+            destination = f"{vertex_name} номер {vertex_number}" if vertex_number else vertex_name
+            current_instruction.append(f"пройдите вперёд до {destination}")
+            instructions.append(" ".join(current_instruction))
+
+        prev_floor = floor_number
+        prev_coords = (coords[0], coords[1])
+        prev_vertex = vertex
+
+    return instructions
 
 
 @router.get("/route", response_model=dict)
@@ -25,6 +175,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Маршрут не найден")
 
     logger.info(f"A* result: path={path}, weight={weight}")
+
+    # Генерируем текстовые инструкции
+    instructions = generate_text_instructions(path, graph, db)
 
     # Преобразуем путь в формат для фронта
     route = []
@@ -119,7 +272,6 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             if prev_vertex and vertex.startswith("segment_") and prev_vertex.startswith("segment_"):
                 prev_segment_id = int(prev_vertex.split("_")[1])
                 curr_segment_id = int(vertex.split("_")[1])
-                from app.map.models.connection import Connection
                 connection = db.query(Connection).filter(
                     Connection.type == "лестница",
                     ((Connection.from_segment_id == prev_segment_id) & (Connection.to_segment_id == curr_segment_id)) |
@@ -184,4 +336,5 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     if floor_points:
         route.append({"floor": current_floor_number, "points": floor_points})
 
-    return {"path": route, "weight": weight}
+    # Добавляем текстовые инструкции в ответ
+    return {"path": route, "weight": weight, "instructions": instructions}
