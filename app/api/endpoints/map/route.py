@@ -16,12 +16,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def get_direction(prev_coords: tuple, curr_coords: tuple, prev_direction: str = None) -> str:
+def get_direction(prev_coords: tuple, curr_coords: tuple, prev_direction: str = None,
+                  initial_orientation: str = "вперёд") -> str:
     """
     Определяет направление движения на основе смещения координат.
     prev_coords: (x, y) - предыдущая точка
     curr_coords: (x, y) - текущая точка
     prev_direction: Предыдущее направление (для оптимизации поворотов)
+    initial_orientation: Начальная ориентация (по умолчанию "вперёд")
     Возвращает: "налево", "направо", "вперёд" или "назад"
     """
     dx = curr_coords[0] - prev_coords[0]
@@ -34,7 +36,7 @@ def get_direction(prev_coords: tuple, curr_coords: tuple, prev_direction: str = 
     # Вычисляем угол в градусах
     angle = degrees(atan2(dy, dx))
 
-    # Определяем направление
+    # Определяем направление относительно начальной ориентации
     direction = None
     if -45 <= angle <= 45:
         direction = "направо"  # Движение вправо (x увеличивается)
@@ -44,6 +46,12 @@ def get_direction(prev_coords: tuple, curr_coords: tuple, prev_direction: str = 
         direction = "налево"  # Движение влево (x уменьшается)
     else:
         direction = "назад"  # Движение вниз (y уменьшается)
+
+    # Корректировка для начальной ориентации (если указано "налево" в начале)
+    if i == 1 and initial_orientation == "налево" and direction == "направо":
+        direction = "налево"
+    elif i == 1 and initial_orientation == "налево" and direction == "назад":
+        direction = "направо"
 
     # Оптимизация поворотов: если предыдущее направление противоположное, корректируем
     if prev_direction:
@@ -111,6 +119,8 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
         # Начало маршрута
         if i == 0:
             current_instruction.append(f"При выходе из {vertex_name}")
+            # Предполагаем, что начальная ориентация в комнате — "налево" (по желанию)
+            initial_orientation = "налево"
             prev_floor = floor_number
             prev_coords = (coords[0], coords[1])
             prev_vertex = vertex
@@ -141,14 +151,14 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
 
         # Определяем направление движения
         if prev_coords and not (prev_vertex.startswith("segment_") and vertex.startswith("segment_")):
-            direction = get_direction(prev_coords, (coords[0], coords[1]), prev_direction)
-            # Если это первый поворот после перехода или начала шага, добавляем "Поверните"
-            if not current_instruction or "поверните" not in current_instruction[-1].lower():
-                current_instruction.append(f"поверните {direction}")
-            else:
-                # Если уже есть поворот, начинаем новый шаг
-                instructions.append(" ".join(current_instruction))
-                current_instruction = [f"поверните {direction}"]
+            direction = get_direction(prev_coords, (coords[0], coords[1]), prev_direction,
+                                      initial_orientation if i == 1 else None)
+            if direction != "вперёд" or not current_instruction:  # Добавляем поворот только если он не "вперёд" или это начало шага
+                if current_instruction and "поверните" in current_instruction[-1].lower():
+                    instructions.append(" ".join(current_instruction))
+                    current_instruction = [f"поверните {direction}"]
+                else:
+                    current_instruction.append(f"поверните {direction}")
             prev_direction = direction
 
         # Если это последняя точка, указываем пункт назначения
