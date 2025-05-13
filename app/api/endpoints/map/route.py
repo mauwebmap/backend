@@ -27,9 +27,7 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     i: Индекс текущей вершины в пути
     Возвращает: "налево", "направо", "вперёд" или "назад" для движения, или поворот при изменении направления
     """
-    # Вычисляем векторы для предыдущего и текущего сегментов
-    prev_dx = prev_coords[0] - prev_prev_coords[0]
-    prev_dy = prev_coords[1] - prev_prev_coords[1]
+    # Вычисляем векторы для текущего сегмента
     curr_dx = curr_coords[0] - prev_coords[0]
     curr_dy = curr_coords[1] - prev_coords[1]
 
@@ -37,16 +35,11 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     if curr_dx == 0 and curr_dy == 0:
         return "вперёд"
 
-    # Вычисляем углы для предыдущего и текущего сегментов (в градусах)
-    prev_angle = degrees(atan2(prev_dy, prev_dx)) if (prev_dx != 0 or prev_dy != 0) else 0
+    # Вычисляем угол для текущего сегмента
     curr_angle = degrees(atan2(curr_dy, curr_dx))
-
-    # Нормализуем углы в диапазон [-180, 180]
-    prev_angle = ((prev_angle + 180) % 360) - 180
     curr_angle = ((curr_angle + 180) % 360) - 180
 
-    # Определяем базовое направление текущего сегмента
-    base_direction = None
+    # Базовое направление текущего сегмента
     if -45 <= curr_angle <= 45:
         base_direction = "направо"  # Движение вправо (x увеличивается)
     elif 45 < curr_angle <= 135:
@@ -62,16 +55,22 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     elif i == 1 and initial_orientation == "налево" and base_direction == "назад":
         base_direction = "направо"
 
-    # Если это первый сегмент (нет предыдущего), возвращаем базовое направление
-    if prev_prev_coords is None or (prev_dx == 0 and prev_dy == 0):
+    # Если это первый или второй сегмент (prev_prev_coords is None), возвращаем базовое направление
+    if prev_prev_coords is None:
         return base_direction
 
-    # Вычисляем разницу углов для определения поворота
-    angle_diff = curr_angle - prev_angle
-    angle_diff = ((angle_diff + 180) % 360) - 180  # Нормализация разницы углов
+    # Вычисляем векторы для предыдущего сегмента
+    prev_dx = prev_coords[0] - prev_prev_coords[0]
+    prev_dy = prev_coords[1] - prev_prev_coords[1]
+
+    # Вычисляем угол для предыдущего сегмента
+    prev_angle = degrees(atan2(prev_dy, prev_dx)) if (prev_dx != 0 or prev_dy != 0) else 0
+    prev_angle = ((prev_angle + 180) % 360) - 180
 
     # Определяем поворот
-    if abs(angle_diff) > 10:  # Порог для игнорирования мелких изменений (в градусах)
+    if abs(curr_angle - prev_angle) > 10:  # Порог для игнорирования мелких изменений (в градусах)
+        angle_diff = curr_angle - prev_angle
+        angle_diff = ((angle_diff + 180) % 360) - 180  # Нормализация разницы углов
         if -180 < angle_diff <= -10:
             return "поверните налево"  # Против часовой стрелки
         elif 10 <= angle_diff < 180:
