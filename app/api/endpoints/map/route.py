@@ -109,9 +109,9 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
     prev_coords = None
     prev_vertex = None
     prev_direction = None
-    prev_floor = None  # Initialize prev_floor to None
+    prev_floor = None
     current_instruction = []
-    last_turn = None  # Track the last turn for the final step
+    last_turn = None
 
     for i, vertex in enumerate(path):
         # Получаем координаты текущей вершины
@@ -139,9 +139,8 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
         # Проверяем переход между этажами
         if prev_floor is not None and prev_floor != floor_number and i > 1:
             if current_instruction:
-                # Добавляем только последнюю инструкцию (без лишних направлений)
-                if len(current_instruction) > 1 and "поверните" in current_instruction[-1].lower():
-                    instructions.append(" ".join([current_instruction[0], current_instruction[-1]]))
+                if last_turn and "поверните" in last_turn.lower():
+                    instructions.append(" ".join([current_instruction[0], last_turn]))
                 else:
                     instructions.append(" ".join(current_instruction))
                 current_instruction = []
@@ -170,11 +169,17 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
                                       initial_orientation="налево" if i == 1 else None, i=i)
             if direction.startswith("поверните"):
                 last_turn = direction
-                if current_instruction and "поверните" not in current_instruction[-1].lower():
-                    current_instruction = [current_instruction[0]]
+                # Remove any simple direction (e.g., "налево", "направо") before adding the turn
+                if current_instruction and current_instruction[-1] in ["налево", "направо", "вперёд", "назад"]:
+                    current_instruction.pop()
+                if not current_instruction:
+                    current_instruction.append("")  # Placeholder to keep structure
                 current_instruction.append(direction)
             elif direction != "вперёд":
-                if not last_turn:  # Only add simple direction if no turn has been detected
+                # Only add simple direction if no turn has been detected in this segment
+                if not last_turn:
+                    if not current_instruction:
+                        current_instruction.append("")  # Placeholder
                     current_instruction.append(direction)
             prev_direction = direction if not direction.startswith("поверните") else prev_direction
 
@@ -182,12 +187,12 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
         if i == len(path) - 1:
             destination = f"{vertex_name} номер {vertex_number}" if vertex_number else vertex_name
             if last_turn and "поверните" in last_turn.lower():
-                current_instruction = [current_instruction[0], last_turn] if current_instruction else [last_turn]
+                current_instruction = [current_instruction[0] if current_instruction else "", last_turn]
                 current_instruction.append(f"и пройдите вперёд до {destination}")
             else:
-                current_instruction = [current_instruction[0]] if current_instruction else []
+                current_instruction = [current_instruction[0] if current_instruction else ""]
                 current_instruction.append(f"пройдите вперёд до {destination}")
-            instructions.append(" ".join(current_instruction))
+            instructions.append(" ".join(filter(None, current_instruction)))  # Remove empty strings
 
         prev_prev_coords = prev_coords
         prev_coords = (coords[0], coords[1])
