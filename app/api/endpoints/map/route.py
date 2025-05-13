@@ -15,57 +15,70 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-def get_direction(prev_coords: tuple, curr_coords: tuple, prev_direction: str = None,
+def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tuple, prev_direction: str = None,
                   initial_orientation: str = "вперёд", i: int = 0) -> str:
     """
-    Определяет направление движения на основе смещения координат.
+    Определяет направление движения или поворот на основе смещения между последними двумя сегментами.
+    prev_prev_coords: (x, y) - точка до предыдущей
     prev_coords: (x, y) - предыдущая точка
     curr_coords: (x, y) - текущая точка
     prev_direction: Предыдущее направление (для оптимизации поворотов)
     initial_orientation: Начальная ориентация (по умолчанию "вперёд")
     i: Индекс текущей вершины в пути
-    Возвращает: "налево", "направо", "вперёд" или "назад"
+    Возвращает: "налево", "направо", "вперёд" или "назад" для движения, или поворот при изменении направления
     """
-    dx = curr_coords[0] - prev_coords[0]
-    dy = curr_coords[1] - prev_coords[1]
+    # Вычисляем векторы для предыдущего и текущего сегментов
+    prev_dx = prev_coords[0] - prev_prev_coords[0]
+    prev_dy = prev_coords[1] - prev_prev_coords[1]
+    curr_dx = curr_coords[0] - prev_coords[0]
+    curr_dy = curr_coords[1] - prev_coords[1]
 
-    # Если нет смещения, считаем, что идём "вперёд"
-    if dx == 0 and dy == 0:
+    # Если нет смещения в текущем сегменте, считаем, что идём "вперёд"
+    if curr_dx == 0 and curr_dy == 0:
         return "вперёд"
 
-    # Вычисляем угол в градусах
-    angle = degrees(atan2(dy, dx))
+    # Вычисляем углы для предыдущего и текущего сегментов (в градусах)
+    prev_angle = degrees(atan2(prev_dy, prev_dx)) if (prev_dx != 0 or prev_dy != 0) else 0
+    curr_angle = degrees(atan2(curr_dy, curr_dx))
 
-    # Определяем направление относительно начальной ориентации
-    direction = None
-    if -45 <= angle <= 45:
-        direction = "направо"  # Движение вправо (x увеличивается)
-    elif 45 < angle <= 135:
-        direction = "вперёд"   # Движение вверх (y увеличивается)
-    elif 135 < angle <= 180 or -180 <= angle < -135:
-        direction = "налево"   # Движение влево (x уменьшается)
+    # Нормализуем углы в диапазон [-180, 180]
+    prev_angle = ((prev_angle + 180) % 360) - 180
+    curr_angle = ((curr_angle + 180) % 360) - 180
+
+    # Определяем базовое направление текущего сегмента
+    base_direction = None
+    if -45 <= curr_angle <= 45:
+        base_direction = "направо"  # Движение вправо (x увеличивается)
+    elif 45 < curr_angle <= 135:
+        base_direction = "вперёд"   # Движение вверх (y увеличивается)
+    elif 135 < curr_angle <= 180 or -180 <= curr_angle < -135:
+        base_direction = "налево"   # Движение влево (x уменьшается)
     else:
-        direction = "назад"    # Движение вниз (y уменьшается)
+        base_direction = "назад"    # Движение вниз (y уменьшается)
 
-    # Корректировка для начальной ориентации (если указано "налево" в начале)
-    if i == 1 and initial_orientation == "налево" and direction == "направо":
-        direction = "налево"
-    elif i == 1 and initial_orientation == "налево" and direction == "назад":
-        direction = "направо"
+    # Корректировка для начальной ориентации (только для первого поворота)
+    if i == 1 and initial_orientation == "налево" and base_direction == "направо":
+        base_direction = "налево"
+    elif i == 1 and initial_orientation == "налево" and base_direction == "назад":
+        base_direction = "направо"
 
-    # Оптимизация поворотов: если предыдущее направление противоположное, корректируем
-    if prev_direction:
-        if (prev_direction == "направо" and direction == "назад") or (
-                prev_direction == "назад" and direction == "направо"):
-            return "налево"
-        elif (prev_direction == "налево" and direction == "назад") or (
-                prev_direction == "назад" and direction == "налево"):
-            return "направо"
-        elif (prev_direction == "вперёд" and direction == "назад") or (
-                prev_direction == "назад" and direction == "вперёд"):
-            return "назад"
+    # Если это первый сегмент (нет предыдущего), возвращаем базовое направление
+    if prev_prev_coords is None or (prev_dx == 0 and prev_dy == 0):
+        return base_direction
 
-    return direction
+    # Вычисляем разницу углов для определения поворота
+    angle_diff = curr_angle - prev_angle
+    angle_diff = ((angle_diff + 180) % 360) - 180  # Нормализация разницы углов
+
+    # Определяем поворот
+    if abs(angle_diff) > 10:  # Порог для игнорирования мелких изменений (в градусах)
+        if -180 < angle_diff <= -10:
+            return "поверните налево"  # Против часовой стрелки
+        elif 10 <= angle_diff < 180:
+            return "поверните направо"  # По часовой стрелке
+
+    # Если нет значительного поворота, возвращаем базовое направление
+    return base_direction
 
 def get_vertex_details(vertex: str, db: Session) -> tuple:
     """
@@ -93,7 +106,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
     Возвращает: Список инструкций (каждая строка — отдельный шаг)
     """
     instructions = []
-    prev_floor = None
+    prev_prev_coords = None
     prev_coords = None
     prev_vertex = None
     prev_direction = None
@@ -117,15 +130,13 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
         # Начало маршрута
         if i == 0:
             current_instruction.append(f"При выходе из {vertex_name}")
-            # Предполагаем, что начальная ориентация в комнате — "налево" (по желанию)
-            initial_orientation = "налево"
-            prev_floor = floor_number
+            initial_orientation = "налево"  # Предполагаем начальную ориентацию
             prev_coords = (coords[0], coords[1])
             prev_vertex = vertex
             continue
 
         # Проверяем переход между этажами
-        if prev_floor != floor_number:
+        if prev_floor != floor_number and i > 1:
             # Завершаем текущую инструкцию, если она есть
             if current_instruction:
                 instructions.append(" ".join(current_instruction))
@@ -146,18 +157,21 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
                     else:
                         instructions.append(f"Дойдите до лестницы и спуститесь на {floor_number}-й этаж")
             prev_direction = None  # Сбрасываем направление после перехода
+            prev_prev_coords = None  # Сбрасываем предыдущую точку после перехода
 
-        # Определяем направление движения
-        if prev_coords and not (prev_vertex.startswith("segment_") and vertex.startswith("segment_")):
-            direction = get_direction(prev_coords, (coords[0], coords[1]), prev_direction,
+        # Определяем направление или поворот
+        if prev_coords:
+            direction = get_direction(prev_prev_coords, prev_coords, (coords[0], coords[1]), prev_direction,
                                      initial_orientation if i == 1 else None, i)
-            if direction != "вперёд" or not current_instruction:  # Добавляем поворот только если он не "вперёд" или это начало шага
+            if direction.startswith("поверните"):
                 if current_instruction and "поверните" in current_instruction[-1].lower():
                     instructions.append(" ".join(current_instruction))
-                    current_instruction = [f"поверните {direction}"]
+                    current_instruction = [direction]
                 else:
-                    current_instruction.append(f"поверните {direction}")
-            prev_direction = direction
+                    current_instruction.append(direction)
+            elif direction != "вперёд" or not current_instruction:
+                current_instruction.append(direction)
+            prev_direction = direction if not direction.startswith("поверните") else prev_direction
 
         # Если это последняя точка, указываем пункт назначения
         if i == len(path) - 1:
@@ -165,8 +179,9 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
             current_instruction.append(f"пройдите вперёд до {destination}")
             instructions.append(" ".join(current_instruction))
 
-        prev_floor = floor_number
+        prev_prev_coords = prev_coords
         prev_coords = (coords[0], coords[1])
+        prev_floor = floor_number
         prev_vertex = vertex
 
     return instructions
