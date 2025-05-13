@@ -130,7 +130,6 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
         # Начало маршрута
         if i == 0:
             current_instruction.append(f"При выходе из {vertex_name}")
-            initial_orientation = "налево"  # Предполагаем начальную ориентацию
             prev_coords = (coords[0], coords[1])
             prev_vertex = vertex
             prev_floor = floor_number  # Set prev_floor for the first vertex
@@ -163,21 +162,28 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
         # Определяем направление или поворот
         if prev_coords:
             direction = get_direction(prev_prev_coords, prev_coords, (coords[0], coords[1]), prev_direction,
-                                     initial_orientation if i == 1 else None, i)
+                                   initial_orientation="налево" if i == 1 else None, i=i)
+            # Prioritize turn instructions over simple directions
             if direction.startswith("поверните"):
+                if current_instruction and "поверните" not in current_instruction[-1].lower():
+                    current_instruction = [current_instruction[0]]  # Keep only the starting point
+                current_instruction.append(direction)
+            elif direction != "вперёд" or not current_instruction:
+                # Replace simple direction if a turn was previously added
                 if current_instruction and "поверните" in current_instruction[-1].lower():
-                    instructions.append(" ".join(current_instruction))
-                    current_instruction = [direction]
+                    current_instruction[-1] = direction
                 else:
                     current_instruction.append(direction)
-            elif direction != "вперёд" or not current_instruction:
-                current_instruction.append(direction)
+
             prev_direction = direction if not direction.startswith("поверните") else prev_direction
 
         # Если это последняя точка, указываем пункт назначения
         if i == len(path) - 1:
             destination = f"{vertex_name} номер {vertex_number}" if vertex_number else vertex_name
-            current_instruction.append(f"пройдите вперёд до {destination}")
+            if current_instruction and "пройдите вперёд" not in current_instruction[-1].lower():
+                current_instruction.append(f"и пройдите вперёд до {destination}")
+            else:
+                current_instruction[-1] = f"пройдите вперёд до {destination}"
             instructions.append(" ".join(current_instruction))
 
         prev_prev_coords = prev_coords
