@@ -10,11 +10,11 @@ logger = logging.getLogger(__name__)
 def a_star(graph: Graph, start: str, goals: list) -> tuple:
     """Находит кратчайший путь, используя A* + ALT"""
     def heuristic(a, b):
-        """Эвристика: евклидово расстояние (если нет ориентиров)"""
+        """Эвристика: евклидово расстояние (игнорируем этажи для outdoor)"""
         if graph.landmarks:
             return max(graph.landmark_heuristic(a, b) for _ in graph.landmarks)
-        xa, ya, _ = graph.vertices[a]
-        xb, yb, _ = graph.vertices[b]
+        xa, ya, _ = graph.vertices[a]  # Игнорируем floor_id, если None
+        xb, yb, _ = graph.vertices[b]  # Игнорируем floor_id, если None
         return sqrt((xa - xb) ** 2 + (ya - yb) ** 2)
 
     if start not in graph.vertices:
@@ -42,7 +42,7 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
             continue
         del open_set_dict[current]
 
-        logger.debug(f"[a_star] Processing vertex: {current}, f_score = {f_score[current]}")
+        logger.debug(f"[a_star] Processing vertex: {current}, f_score = {f_score[current]}, g_score = {g_score.get(current)}")
 
         if current in goals:
             path = []
