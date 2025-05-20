@@ -210,7 +210,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 logger.warning(f"[build_graph] Segment vertices {segment_start} or {segment_end} not in graph for connection {conn.id}")
                 continue
 
-            # Находим фантомную точку на сегменте
+            # Находим фантомную точку на сегменте для всех дверей, а не только для переходов
             room_coords = graph.vertices[room_vertex]
             start_coords = graph.vertices[segment_start]
             end_coords = graph.vertices[segment_end]
@@ -226,14 +226,13 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom)
             logger.debug(f"[build_graph] Adding edge: {room_vertex} -> {phantom_vertex}, weight={dist_to_phantom}, from_coords={room_coords}, to_coords={phantom_coords}")
 
-            # Соединяем фантомную точку с началом и концом сегмента только если сегмент участвует в переходе
-            if conn.segment_id in transition_segments:
-                dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
-                dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
-                graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
-                graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
-                logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_start}, weight={dist_phantom_to_start}")
-                logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_end}, weight={dist_phantom_to_end}")
+            # Соединяем фантомную точку с началом и концом сегмента
+            dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
+            dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
+            graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
+            graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
+            logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_start}, weight={dist_phantom_to_start}")
+            logger.debug(f"[build_graph] Adding edge: {phantom_vertex} -> {segment_end}, weight={dist_phantom_to_end}")
 
         # Соединение между сегментами (лестница)
         elif conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
@@ -251,19 +250,33 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
 
         # Соединение между сегментом и уличным сегментом (улица)
-        elif conn.type == "улица" and conn.from_segment_id and conn.to_outdoor_id:
-            from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
-            to_outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == conn.to_outdoor_id).first()
-            if not from_segment or not to_outdoor:
-                logger.warning(f"[build_graph] Segment {conn.from_segment_id} or outdoor {conn.to_outdoor_id} not found for connection {conn.id}")
-                continue
-            from_vertex = f"segment_{conn.from_segment_id}_end"
-            to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
-            if from_vertex not in graph.vertices or to_vertex not in graph.vertices:
-                logger.warning(f"[build_graph] Segment vertex {from_vertex} or outdoor vertex {to_vertex} not in graph for connection {conn.id}")
-                continue
-            graph.add_edge(from_vertex, to_vertex, weight)
-            logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
+        elif conn.type == "улица":
+            if conn.from_segment_id and conn.to_outdoor_id:
+                from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
+                to_outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == conn.to_outdoor_id).first()
+                if not from_segment or not to_outdoor:
+                    logger.warning(f"[build_graph] Segment {conn.from_segment_id} or outdoor {conn.to_outdoor_id} not found for connection {conn.id}")
+                    continue
+                from_vertex = f"segment_{conn.from_segment_id}_end"
+                to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
+                if from_vertex not in graph.vertices or to_vertex not in graph.vertices:
+                    logger.warning(f"[build_graph] Segment vertex {from_vertex} or outdoor vertex {to_vertex} not in graph for connection {conn.id}")
+                    continue
+                graph.add_edge(from_vertex, to_vertex, weight)
+                logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
+            if conn.from_outdoor_id and conn.to_segment_id:
+                from_outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == conn.from_outdoor_id).first()
+                to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
+                if not from_outdoor or not to_segment:
+                    logger.warning(f"[build_graph] Outdoor {conn.from_outdoor_id} or segment {conn.to_segment_id} not found for connection {conn.id}")
+                    continue
+                from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
+                to_vertex = f"segment_{conn.to_segment_id}_start"
+                if from_vertex not in graph.vertices or to_vertex not in graph.vertices:
+                    logger.warning(f"[build_graph] Outdoor vertex {from_vertex} or segment vertex {to_vertex} not in graph for connection {conn.id}")
+                    continue
+                graph.add_edge(from_vertex, to_vertex, weight)
+                logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
 
     # Соединяем фантомные точки напрямую, если они на одном сегменте и сегмент не участвует в переходе
     phantom_vertices = [v for v in graph.vertices if v.startswith("phantom_")]
@@ -272,7 +285,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             # Извлекаем segment_id из названий вершин
             segment_id1 = int(pv1.split("_")[4])
             segment_id2 = int(pv2.split("_")[4])
-            if segment_id1 == segment_id2 and segment_id1 not in transition_segments:
+            if segment_id1 == segment_id2:
                 # Соединяем фантомные точки напрямую
                 weight = sqrt(
                     (graph.vertices[pv1][0] - graph.vertices[pv2][0]) ** 2 +
@@ -298,7 +311,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 pv_segment = db.query(Segment).filter(Segment.id == pv_segment_id).first()
                 if not pv_segment:
                     continue
-                if pv_segment.floor_id == entry_floor and pv_segment_id != conn.to_segment_id:
+                if pv_segment.floor_id == entry_floor:
                     # Соединяем точку входа с фантомной точкой напрямую
                     weight = sqrt(
                         (graph.vertices[entry_point][0] - graph.vertices[pv][0]) ** 2 +
