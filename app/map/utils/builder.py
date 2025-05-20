@@ -278,6 +278,35 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_edge(from_vertex, to_vertex, weight)
                 logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
 
+        # Соединение между сегментом и уличным сегментом (дверь)
+        elif conn.type == "дверь":
+            if conn.segment_id and conn.to_outdoor_id:
+                from_segment = db.query(Segment).filter(Segment.id == conn.segment_id).first()
+                to_outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == conn.to_outdoor_id).first()
+                if not from_segment or not to_outdoor:
+                    logger.warning(f"[build_graph] Segment {conn.segment_id} or outdoor {conn.to_outdoor_id} not found for connection {conn.id}")
+                    continue
+                from_vertex = f"segment_{conn.segment_id}_end"
+                to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
+                if from_vertex not in graph.vertices or to_vertex not in graph.vertices:
+                    logger.warning(f"[build_graph] Segment vertex {from_vertex} or outdoor vertex {to_vertex} not in graph for connection {conn.id}")
+                    continue
+                graph.add_edge(from_vertex, to_vertex, weight)
+                logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
+            elif conn.from_outdoor_id and conn.to_segment_id:
+                from_outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == conn.from_outdoor_id).first()
+                to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
+                if not from_outdoor or not to_segment:
+                    logger.warning(f"[build_graph] Outdoor {conn.from_outdoor_id} or segment {conn.to_segment_id} not found for connection {conn.id}")
+                    continue
+                from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
+                to_vertex = f"segment_{conn.to_segment_id}_start"
+                if from_vertex not in graph.vertices or to_vertex not in graph.vertices:
+                    logger.warning(f"[build_graph] Outdoor vertex {from_vertex} or segment vertex {to_vertex} not in graph for connection {conn.id}")
+                    continue
+                graph.add_edge(from_vertex, to_vertex, weight)
+                logger.debug(f"[build_graph] Adding edge: {from_vertex} -> {to_vertex}, weight={weight}")
+
     # Соединяем фантомные точки напрямую, если они на одном сегменте и сегмент не участвует в переходе
     phantom_vertices = [v for v in graph.vertices if v.startswith("phantom_")]
     for i, pv1 in enumerate(phantom_vertices):
