@@ -72,7 +72,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
     for i, vertex in enumerate(path):
         coords = graph.vertices[vertex]
         floor_id = coords[2]
-        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1
+        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id else 1
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
 
         if view_floor is not None and floor_number != view_floor and vertex.startswith("outdoor_"):
@@ -119,7 +119,6 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
                 last_turn = direction
             elif direction != "вперёд" and not last_turn:
                 current_instruction.append(direction)
-            # Добавляем информацию о прохождении через сегменты/аутдоры
             if "outdoor_" in vertex:
                 outdoor_name, _ = get_vertex_details(vertex, db)
                 if not last_turn or "поверните" not in last_turn.lower():
@@ -158,9 +157,8 @@ def simplify_route(points: list) -> list:
             continue
         angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
         angle = abs(((angle + 180) % 360) - 180)
-        # Не упрощаем точки, если они являются началом или концом сегмента/аутдора
         vertex = curr_point.get("vertex", "")
-        if "start" in vertex or "end" in vertex:
+        if "start" in vertex or "end" in vertex or curr_point != next_point:  # Убираем повторы
             simplified.append(curr_point)
         elif 70 <= angle <= 110:
             simplified.append(curr_point)
@@ -191,7 +189,7 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
     for i, vertex in enumerate(path):
         coords = graph.vertices[vertex]
         floor_id = coords[2]
-        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1
+        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id else 1
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
         point = {"x": coords[0], "y": coords[1], "vertex": vertex}
         if current_floor_number is None:

@@ -9,22 +9,21 @@ logger = logging.getLogger(__name__)
 def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None) -> float:
     x1, y1, floor1 = current
     x2, y2, floor2 = goal
-    floor_cost = abs(floor1 - floor2) * 50  # Уменьшенный штраф за этаж
+    floor_cost = abs(floor1 - floor2) * 50
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
     deviation_cost = 0
     if prev and graph:
         px, py, _ = prev
-        dx1, dy1 = x1 - px, y1 - py  # Вектор от предыдущей точки к текущей
-        dx2, dy2 = x2 - x1, y2 - y1  # Вектор от текущей к цели
+        dx1, dy1 = x1 - px, y1 - py
+        dx2, dy2 = x2 - x1, y2 - y1
         if dx1 != 0 or dy1 != 0:
             angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
             angle = abs(((angle + 180) % 360) - 180)
-            # Штрафуем, если угол поворота больше 90 градусов (разворот назад)
-            if angle > 90:
-                deviation_cost = (angle - 90) * 5  # Высокий штраф за разворот
+            if angle > 120:  # Снижаем строгость фильтрации (было 90)
+                deviation_cost = (angle - 90) * 3
             elif angle < 70 or angle > 110:
-                deviation_cost = (abs(angle - 90)) * 1  # Минимальный штраф за отклонение
+                deviation_cost = (abs(angle - 90)) * 1
 
     return distance + floor_cost + deviation_cost
 
@@ -41,7 +40,7 @@ def find_path(db, start: str, end: str, return_graph=False):
         logger.warning(f"Start {start} or end {end} not in graph vertices")
         return [], float('inf'), graph if return_graph else []
 
-    open_set = [(0, start)]  # (f_score, vertex)
+    open_set = [(0, start)]
     came_from = {}
     g_score = {start: 0}
     f_score = {start: heuristic(graph.vertices[start], graph.vertices[end], None, graph)}
@@ -64,7 +63,6 @@ def find_path(db, start: str, end: str, return_graph=False):
             path.append(start)
             path.reverse()
 
-            # Упрощенное добавление противоположных точек с приоритетом ближайших
             final_path = []
             goal_coords = graph.vertices[end]
             for i, vertex in enumerate(path):
@@ -80,13 +78,9 @@ def find_path(db, start: str, end: str, return_graph=False):
                         curr_coords = graph.vertices[vertex]
                         opp_coords = graph.vertices[opposite]
                         next_coords = graph.vertices[path[i + 1]]
-                        # Проверяем, является ли противоположная точка ближе к следующей в направлении к цели
                         curr_dist = sqrt((next_coords[0] - curr_coords[0]) ** 2 + (next_coords[1] - curr_coords[1]) ** 2)
                         opp_dist = sqrt((next_coords[0] - opp_coords[0]) ** 2 + (next_coords[1] - opp_coords[1]) ** 2)
-                        goal_angle = degrees(atan2(next_coords[1] - opp_coords[1], next_coords[0] - opp_coords[0]))
-                        curr_angle = degrees(atan2(goal_coords[1] - curr_coords[1], goal_coords[0] - curr_coords[0]))
-                        angle_diff = abs(((goal_angle - curr_angle + 180) % 360) - 180)
-                        if opp_dist < curr_dist and angle_diff < 90:  # Приоритет ближе и в направлении цели
+                        if opp_dist < curr_dist:  # Добавляем только если ближе
                             final_path.append(opposite)
 
             weight = g_score[end]
@@ -102,22 +96,19 @@ def find_path(db, start: str, end: str, return_graph=False):
                 continue
             curr_coords = graph.vertices[current]
             neighbor_coords = graph.vertices[neighbor]
-            # Проверяем направление к цели
             dx1, dy1 = neighbor_coords[0] - curr_coords[0], neighbor_coords[1] - curr_coords[1]
             dx2, dy2 = goal_coords[0] - curr_coords[0], goal_coords[1] - curr_coords[1]
             if dx1 != 0 or dy1 != 0:
                 angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
                 angle = abs(((angle + 180) % 360) - 180)
-                if angle > 90:  # Исключаем развороты назад
+                if angle > 120:  # Разрешаем небольшие отклонения
                     continue
 
             tentative_g_score = g_score[current] + weight
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                f_score[neighbor] = tentative_g_score + heuristic(
-                    neighbor_coords, goal_coords, curr_coords, graph
-                )
+                f_score[neighbor] = tentative_g_score + heuristic(neighbor_coords, goal_coords, curr_coords, graph)
                 heappush(open_set, (f_score[neighbor], neighbor))
                 logger.debug(f"Added to open_set: {neighbor}, f_score={f_score[neighbor]}")
 
