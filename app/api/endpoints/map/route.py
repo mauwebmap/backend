@@ -149,7 +149,11 @@ def simplify_route(points: list) -> list:
             continue
         angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
         angle = abs(((angle + 180) % 360) - 180)
-        if 70 <= angle <= 110:
+        # Сохраняем точку, если она является началом или концом сегмента/аутдора
+        if "start" in prev_point.get("vertex", "") or "end" in prev_point.get("vertex", "") or \
+           "start" in next_point.get("vertex", "") or "end" in next_point.get("vertex", ""):
+            simplified.append(curr_point)
+        elif 70 <= angle <= 110:
             simplified.append(curr_point)
     simplified.append(points[-1])
     return simplified
@@ -180,7 +184,7 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
         floor_id = coords[2]
         floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
-        point = {"x": coords[0], "y": coords[1]}
+        point = {"x": coords[0], "y": coords[1], "vertex": vertex}  # Добавляем метку вершины
         if current_floor_number is None:
             current_floor_number = floor_number
             floor_points.append(point)
