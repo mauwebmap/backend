@@ -8,9 +8,11 @@ logger = logging.getLogger(__name__)
 
 def a_star(graph: Graph, start: str, goals: list) -> tuple:
     def heuristic(a, b):
-        xa, ya, _ = graph.vertices[a]
-        xb, yb, _ = graph.vertices[b]
-        return sqrt((xa - xb) ** 2 + (ya - yb) ** 2)
+        xa, ya, fa = graph.vertices[a]
+        xb, yb, fb = graph.vertices[b]
+        # Добавляем штраф за разницу этажей для поощрения переходов
+        floor_penalty = abs(fa - fb) * 100 if fa != fb else 0
+        return sqrt((xa - xb) ** 2 + (ya - yb) ** 2) + floor_penalty
 
     if start not in graph.vertices:
         logger.error(f"Start vertex {start} not in graph")
@@ -26,6 +28,7 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
 
     while open_set:
         f, current = heapq.heappop(open_set)
+        logger.info(f"Processing vertex: {current}, f_score={f}")
         if current in goals:
             path = []
             while current in came_from:
@@ -45,7 +48,7 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
                 heapq.heappush(open_set, (f_score[neighbor], neighbor))
             logger.info(f"Checked neighbor {neighbor}, tentative_g_score={tentative_g_score}, g_score={g_score.get(neighbor)}")
 
-    logger.warning(f"Path from {start} to {goals} not found")
+    logger.warning(f"Path from {start} to {goals} not found. Final g_scores: {g_score}")
     return None, None
 
 def find_path(db: Session, start: str, end: str, return_graph: bool = False) -> tuple:
