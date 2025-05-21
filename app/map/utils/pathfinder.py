@@ -7,7 +7,6 @@ import heapq
 logger = logging.getLogger(__name__)
 
 def a_star(graph: Graph, start: str, goals: list) -> tuple:
-    """Находит кратчайший путь, используя A*."""
     def heuristic(a, b):
         xa, ya, _ = graph.vertices[a]
         xb, yb, _ = graph.vertices[b]
@@ -34,6 +33,7 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
                 current = came_from[current]
             path.append(start)
             path.reverse()
+            logger.debug(f"Path found: {path}, weight={g_score[path[-1]]}")
             return path, g_score[path[-1]]
 
         for neighbor, weight, _ in graph.edges.get(current, []):
@@ -43,18 +43,17 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
                 g_score[neighbor] = tentative_g_score
                 f_score[neighbor] = tentative_g_score + heuristic(neighbor, min(goals, key=lambda g: heuristic(neighbor, g)))
                 heapq.heappush(open_set, (f_score[neighbor], neighbor))
+            logger.debug(f"Checked neighbor {neighbor}, tentative_g_score={tentative_g_score}, g_score={g_score.get(neighbor)}")
 
     logger.warning(f"Path from {start} to {goals} not found")
     return None, None
 
 def find_path(db: Session, start: str, end: str, return_graph: bool = False) -> tuple:
-    """Находит кратчайший путь между start и end."""
     graph = build_graph(db, start, end)
     goals = [end] if isinstance(end, str) else end
     path, weight = a_star(graph, start, goals)
-
     if path is None:
         logger.warning(f"No path found from {start} to {end}")
-        return (None, None, graph) if return_graph else (None, None)
-
+    else:
+        logger.info(f"Path found from {start} to {end}, weight={weight}")
     return (path, weight, graph) if return_graph else (path, weight)

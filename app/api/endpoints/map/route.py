@@ -8,12 +8,14 @@ from app.map.models.outdoor_segment import OutdoorSegment
 from app.map.models.floor import Floor
 from app.map.models.connection import Connection
 from math import atan2, degrees
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tuple, prev_direction: str = None,
                   i: int = 0) -> str:
-    """Определяет направление движения или поворот."""
     curr_dx = curr_coords[0] - prev_coords[0]
     curr_dy = curr_coords[1] - prev_coords[1]
     if curr_dx == 0 and curr_dy == 0:
@@ -36,11 +38,9 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     angle_diff = ((curr_angle - prev_angle + 180) % 360) - 180
     if abs(angle_diff) > 10:
         return "поверните налево" if -180 < angle_diff <= -10 else "поверните направо"
-
     return base_direction
 
 def get_vertex_details(vertex: str, db: Session) -> tuple:
-    """Возвращает читаемое имя вершины и её номер."""
     vertex_type, vertex_id = vertex.split("_", 1)
     if vertex_type == "room":
         room = db.query(Room).filter(Room.id == int(vertex_id)).first()
@@ -49,10 +49,14 @@ def get_vertex_details(vertex: str, db: Session) -> tuple:
         return "лестницы", None
     elif vertex_type == "outdoor":
         return f"Уличный сегмент {vertex_id}", None
+    elif vertex_type == "phantom":
+        parts = vertex_id.split("_")
+        room_id = parts[1]
+        room = db.query(Room).filter(Room.id == int(room_id)).first()
+        return f"Фантомная точка у {room.name if room else 'комнаты'}", None
     return vertex, None
 
 def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
-    """Генерирует текстовое описание пути."""
     instructions = []
     prev_prev_coords = None
     prev_coords = None
@@ -65,6 +69,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
         coords = graph.vertices[vertex]
         floor_id = coords[2]
         floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 0 else 0
+        logger.debug(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
 
         vertex_name, vertex_number = get_vertex_details(vertex, db)
 
@@ -94,6 +99,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
 
         if prev_coords:
             direction = get_direction(prev_prev_coords, prev_coords, (coords[0], coords[1]), i=i)
+            logger.debug(f"Direction for {vertex}: {direction}")
             if direction.startswith("поверните"):
                 last_turn = direction
                 if current_instruction and current_instruction[-1] in ["налево", "направо", "вперёд", "назад"]:
@@ -118,10 +124,13 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
 
 @router.get("/route", response_model=dict)
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
+    logger.info(f"Received request to find route from {start} to {end}")
     path, weight, graph = find_path(db, start, end, return_graph=True)
     if not path:
+        logger.warning(f"No path found from {start} to {end}")
         raise HTTPException(status_code=404, detail="Маршрут не найден")
 
+    logger.debug(f"Path: {path}, Weight: {weight}")
     instructions = generate_text_instructions(path, graph, db)
 
     route = []
@@ -133,21 +142,20 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         coords = graph.vertices[vertex]
         floor_id = coords[2]
         floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 0 else 0
+        logger.debug(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
 
         point = {"x": coords[0], "y": coords[1]}
         point_tuple = (coords[0], coords[1])
 
         if current_floor_number is None:
             current_floor_number = floor_number
-            if point_tuple not in added_points:
-                floor_points.append(point)
-                added_points.add(point_tuple)
+            floor_points.append(point)
+            added_points.add(point_tuple)
         elif floor_number != current_floor_number:
             if floor_points:
                 route.append({"floor": current_floor_number, "points": floor_points})
-            added_points.clear()
-            floor_points = [point] if point_tuple not in added_points else []
-            added_points.add(point_tuple)
+            floor_points = [point]
+            added_points = {point_tuple}
             current_floor_number = floor_number
         else:
             if point_tuple not in added_points:
@@ -157,4 +165,5 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     if floor_points:
         route.append({"floor": current_floor_number, "points": floor_points})
 
+    logger.debug(f"Generated route: {route}")
     return {"path": route, "weight": weight, "instructions": instructions}
