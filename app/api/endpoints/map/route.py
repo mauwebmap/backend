@@ -144,11 +144,12 @@ def simplify_route(points: list) -> list:
         next_point = points[i + 1]
         dx1, dy1 = curr_point["x"] - prev_point["x"], curr_point["y"] - prev_point["y"]
         dx2, dy2 = next_point["x"] - curr_point["x"], next_point["y"] - curr_point["y"]
-        # Угол между векторами
-        angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
-        if abs(angle) < 10:  # Если угол меньше 10 градусов, точка на прямой — пропускаем
+        if dx1 * dx2 + dy1 * dy2 == 0:  # Проверка на прямую линию
             continue
-        simplified.append(curr_point)
+        angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
+        angle = abs(((angle + 180) % 360) - 180)
+        if 70 <= angle <= 110:  # Ограничиваем угол поворота
+            simplified.append(curr_point)
     simplified.append(points[-1])
     return simplified
 
