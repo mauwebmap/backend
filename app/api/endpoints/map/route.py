@@ -19,7 +19,7 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     curr_dx = curr_coords[0] - prev_coords[0]
     curr_dy = curr_coords[1] - prev_coords[1]
     distance = sqrt(curr_dx ** 2 + curr_dy ** 2)
-    if distance < 15:  # Увеличен порог для мелких движений
+    if distance < 15:
         return "вперёд" if prev_direction in ["вперёд", None] else prev_direction
 
     curr_angle = degrees(atan2(curr_dy, curr_dx))
@@ -40,7 +40,7 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     prev_angle = ((prev_angle + 180) % 360) - 180
 
     angle_diff = ((curr_angle - prev_angle + 180) % 360) - 180
-    if abs(angle_diff) < 45:  # Увеличен порог для игнорирования мелких поворотов
+    if abs(angle_diff) < 45:
         return "вперёд" if prev_direction in ["вперёд", None] else base_direction
     return "поверните налево" if -180 < angle_diff <= -45 else "поверните направо"
 
@@ -160,7 +160,13 @@ def simplify_route(points: list) -> list:
 @router.get("/route", response_model=dict)
 async def get_route(start: str, end: str, view_floor: int = None, db: Session = Depends(get_db)):
     logger.info(f"Received request to find route from {start} to {end}")
-    path, weight, graph = find_path(db, start, end, return_graph=True)
+    try:
+        path, weight, graph = find_path(db, start, end, return_graph=True)
+        logger.info(f"Pathfinding completed: path={path}, weight={weight}")
+    except Exception as e:
+        logger.error(f"Error during pathfinding: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при поиске пути: {e}")
+
     if not path:
         logger.warning(f"No path found from {start} to {end}")
         raise HTTPException(status_code=404, detail="Маршрут не найден")
@@ -176,9 +182,6 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
         coords = graph.vertices[vertex]
         floor_id = coords[2]
         floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1
-        if view_floor is not None and floor_number != view_floor and vertex.startswith("outdoor_"):
-            continue
-
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
         point = {"x": coords[0], "y": coords[1]}
         if current_floor_number is None:
