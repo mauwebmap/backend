@@ -10,8 +10,7 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
     def heuristic(a, b):
         xa, ya, fa = graph.vertices[a]
         xb, yb, fb = graph.vertices[b]
-        # Снижаем штраф за разницу этажей для облегчения переходов
-        floor_penalty = abs(fa - fb) * 10 if fa != fb else 0
+        floor_penalty = abs(fa - fb) * 5 if fa != fb else 0  # Снижаем штраф до 5
         return sqrt((xa - xb) ** 2 + (ya - yb) ** 2) + floor_penalty
 
     if start not in graph.vertices:

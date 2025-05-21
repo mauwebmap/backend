@@ -42,7 +42,7 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     distance = sqrt(curr_dx ** 2 + curr_dy ** 2)
     # Игнорируем мелкие движения (< 10 единиц) и повороты < 30 градусов
     if distance < 10 or abs(angle_diff) < 30:
-        return "вперёд" if prev_direction == "вперёд" else prev_direction
+        return "вперёд" if prev_direction in ["вперёд", None] else base_direction
     return "поверните налево" if -180 < angle_diff <= -30 else "поверните направо"
 
 def get_vertex_details(vertex: str, db: Session) -> tuple:
@@ -103,11 +103,11 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
             last_turn = None
 
         if prev_coords:
-            direction = get_direction(prev_prev_coords, prev_coords, (coords[0], coords[1]), i=i)
+            direction = get_direction(prev_prev_coords, prev_coords, (coords[0], coords[1]), last_turn, i)
             logger.info(f"Direction for {vertex}: {direction}")
             if direction.startswith("поверните"):
-                if last_turn and "поверните" in last_turn.lower():
-                    current_instruction[-1] = direction  # Заменяем предыдущий поворот
+                if last_turn and "повerните" in last_turn.lower():
+                    current_instruction[-1] = direction
                 else:
                     current_instruction.append(direction)
                 last_turn = direction
@@ -129,7 +129,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
     return instructions
 
 def simplify_route(points: list) -> list:
-    """Упрощает маршрут, удаляя избыточные точки с малым отклонением."""
+    """Упрощает маршрут, удаляя избыточные точки."""
     if len(points) < 3:
         return points
     simplified = [points[0]]
@@ -139,8 +139,14 @@ def simplify_route(points: list) -> list:
         next_point = points[i + 1]
         dx1, dy1 = curr_point["x"] - prev_point["x"], curr_point["y"] - prev_point["y"]
         dx2, dy2 = next_point["x"] - curr_point["x"], next_point["y"] - curr_point["y"]
-        # Удаляем точку, если она близка к прямой линии (угол почти 180°)
-        if abs(atan2(dy2, dx2) - atan2(dy1, dx1)) < 0.1:  # Малый угол отклонения
+        dist1 = sqrt(dx1 ** 2 + dy1 ** 2)
+        dist2 = sqrt(dx2 ** 2 + dy2 ** 2)
+        # Пропускаем точку, если расстояние мало или направление почти не меняется
+        if dist1 < 20 and dist2 < 20:
+            continue
+        angle1 = atan2(dy1, dx1) if (dx1 != 0 or dy1 != 0) else 0
+        angle2 = atan2(dy2, dx2) if (dx2 != 0 or dy2 != 0) else 0
+        if abs(angle1 - angle2) < 0.2:  # Увеличен порог для упрощения
             continue
         simplified.append(curr_point)
     simplified.append(points[-1])

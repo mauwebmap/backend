@@ -12,13 +12,10 @@ logger = logging.getLogger(__name__)
 VALID_TYPES = {"room", "segment", "outdoor"}
 
 def parse_vertex_id(vertex: str):
-    try:
-        type_, id_ = vertex.split("_", 1)
-        if type_ not in VALID_TYPES:
-            raise ValueError(f"Неверный тип вершины: {type_}")
-        return type_, int(id_)
-    except (ValueError, IndexError) as e:
-        raise ValueError(f"Неверный формат ID вершины {vertex}: {e}")
+    type_, id_ = vertex.split("_", 1)
+    if type_ not in VALID_TYPES:
+        raise ValueError(f"Неверный тип вершины: {type_}")
+    return type_, int(id_)
 
 def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tuple) -> tuple:
     rx, ry, _ = room_coords
@@ -127,7 +124,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         graph.add_edge(start_vertex, end_vertex, weight)
         logger.info(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
 
-    outdoor_segments = db.query(OutdoorSegment).all()  # Все outdoor для межзданий
+    outdoor_segments = db.query(OutdoorSegment).all()
     for outdoor in outdoor_segments:
         start_vertex = f"outdoor_{outdoor.id}_start"
         end_vertex = f"outdoor_{outdoor.id}_end"
@@ -135,11 +132,25 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(start_vertex, (outdoor.start_x, outdoor.start_y, 0))
         if end_vertex not in graph.vertices:
             graph.add_vertex(end_vertex, (outdoor.end_x, outdoor.end_y, 0))
-        weight = sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2)
+        weight = sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.end_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
         logger.info(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
 
-    connections = db.query(Connection).all()  # Все соединения для межзданий
+    # Добавляем связи между outdoor_segment, если они пересекаются
+    for i, outdoor1 in enumerate(outdoor_segments):
+        for outdoor2 in outdoor_segments[i + 1:]:
+            o1_start = (outdoor1.start_x, outdoor1.start_y)
+            o1_end = (outdoor1.end_x, outdoor1.end_y)
+            o2_start = (outdoor2.start_x, outdoor2.start_y)
+            o2_end = (outdoor2.end_x, outdoor2.end_y)
+            if (o1_start == o2_end or o1_end == o2_start):
+                vertex1 = f"outdoor_{outdoor1.id}_start" if o1_start == o2_end else f"outdoor_{outdoor1.id}_end"
+                vertex2 = f"outdoor_{outdoor2.id}_end" if o1_start == o2_end else f"outdoor_{outdoor2.id}_start"
+                weight = 1  # Минимальный вес для соединения
+                graph.add_edge(vertex1, vertex2, weight)
+                logger.info(f"Added edge between outdoor segments: {vertex1} -> {vertex2}, weight={weight}")
+
+    connections = db.query(Connection).all()
     for conn in connections:
         weight = conn.weight if conn.weight else 1
         if conn.type == "дверь" and conn.room_id and conn.segment_id:
