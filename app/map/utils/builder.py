@@ -57,8 +57,8 @@ def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
         outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == id_).first()
         if not outdoor or outdoor.start_x is None or outdoor.start_y is None or outdoor.end_x is None or outdoor.end_y is None:
             raise ValueError(f"Уличный сегмент {vertex} не найден или координаты некорректны")
-        graph.add_vertex(f"outdoor_{id_}_start", (outdoor.start_x, outdoor.start_y, 1))  # floor_id=1 для outdoor
-        graph.add_vertex(f"outdoor_{id_}_end", (outdoor.end_x, outdoor.end_y, 1))      # floor_id=1 для outdoor
+        graph.add_vertex(f"outdoor_{id_}_start", (outdoor.start_x, outdoor.start_y, 1))
+        graph.add_vertex(f"outdoor_{id_}_end", (outdoor.end_x, outdoor.end_y, 1))
 
 def get_relevant_buildings(db: Session, start: str, end: str) -> set:
     building_ids = set()
@@ -89,7 +89,7 @@ def get_relevant_floors(db: Session, start: str, end: str) -> set:
     floor_ids.add(1)  # Добавляем floor_id=1 для outdoor
     return floor_ids
 
-def build_graph(db: Session, start: str, end: str) -> Graph:
+def build_graph(db: Session, start: str, end: str, return_all_edges=False) -> Graph:
     graph = Graph()
     add_vertex_to_graph(graph, db, start)
     add_vertex_to_graph(graph, db, end)
@@ -231,7 +231,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     outdoor_connections[conn.from_outdoor_id] = []
                 outdoor_connections[conn.from_outdoor_id].append((conn.to_outdoor_id, weight))
 
-    # Соединяем сегменты через outdoor-цепочки
+    # Соединяем сегменты через полные outdoor-цепочки
     segment_to_outdoor = {}
     outdoor_to_segment = {}
     for conn in all_connections:
@@ -242,22 +242,36 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         if conn.from_outdoor_id and conn.to_segment_id:
             outdoor_to_segment[conn.from_outdoor_id] = (conn.to_segment_id, weight)
 
-    for seg_id, (outdoor_id, weight1) in segment_to_outdoor.items():
-        current_outdoor = outdoor_id
+    for seg_id, (start_outdoor_id, weight1) in segment_to_outdoor.items():
+        current_outdoor = start_outdoor_id
         total_weight = weight1
-        visited = set()
-        while current_outdoor in outdoor_connections and current_outdoor not in visited:
-            visited.add(current_outdoor)
+        visited = set([start_outdoor_id])
+        path_found = False
+        while current_outdoor in outdoor_connections and not path_found:
             for next_outdoor, outdoor_weight in outdoor_connections.get(current_outdoor, []):
+                if next_outdoor in visited:
+                    continue
+                visited.add(next_outdoor)
+                total_weight += outdoor_weight
                 if next_outdoor in outdoor_to_segment:
                     target_seg_id, weight2 = outdoor_to_segment[next_outdoor]
                     from_vertex = f"segment_{seg_id}_end"
                     to_vertex = f"segment_{target_seg_id}_start"
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                        final_weight = total_weight + outdoor_weight + weight2
+                        final_weight = total_weight + weight2
                         graph.add_edge(from_vertex, to_vertex, final_weight)
-                    break
-                total_weight += outdoor_weight
+                        path_found = True
+                        break
                 current_outdoor = next_outdoor
+                if len(visited) > len(outdoor_connections):  # Предотвращаем бесконечный цикл
+                    break
+
+    # Возвращаем все ребра, если требуется отображение
+    if return_all_edges:
+        all_edges = []
+        for vertex in graph.vertices:
+            for neighbor, weight, _ in graph.edges.get(vertex, []):
+                all_edges.append((vertex, neighbor, weight))
+        graph.all_edges = all_edges
 
     return graph

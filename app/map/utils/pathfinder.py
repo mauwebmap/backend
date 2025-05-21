@@ -29,7 +29,7 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
     g_score = {start: 0}
     f_score = {start: min(heuristic(start, goal) for goal in goals)}
     open_set_dict = {start: f_score[start]}
-    visited = set()  # Для отслеживания посещенных вершин
+    visited = set()
 
     while open_set:
         _, current = heapq.heappop(open_set)
@@ -49,13 +49,12 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
             return path, g_score[path[-1]]
 
         if current in visited:
-            continue  # Пропускаем уже посещенные вершины
+            continue
         visited.add(current)
 
         for neighbor, weight, _ in graph.edges.get(current, []):
             tentative_g_score = g_score[current] + weight
 
-            # Проверяем, улучшает ли путь переход к соседней вершине
             if neighbor not in g_score or tentative_g_score < g_score.get(neighbor, float('inf')):
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
@@ -70,11 +69,11 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
     logger.warning(f"[A*] Путь от '{start}' до {goals} не найден.")
     return None, None
 
-def find_path(db: Session, start: str, end: str, return_graph: bool = False) -> tuple:
+def find_path(db: Session, start: str, end: str, return_graph: bool = False, return_all_edges: bool = False) -> tuple:
     """Находит кратчайший путь между start и end."""
     logger.info(f"[find_path] Запрос пути от '{start}' до '{end}'")
 
-    graph = build_graph(db, start, end)
+    graph = build_graph(db, start, end, return_all_edges)
     logger.info("[find_path] Граф построен")
 
     goals = [end] if isinstance(end, str) else end
@@ -85,4 +84,6 @@ def find_path(db: Session, start: str, end: str, return_graph: bool = False) -> 
         return (None, None, graph) if return_graph else (None, None)
 
     logger.info(f"[find_path] Путь успешно найден. Длина: {weight}. Вершин: {len(path)}")
+    if return_graph and return_all_edges:
+        return (path, weight, graph, graph.all_edges) if hasattr(graph, 'all_edges') else (path, weight, graph)
     return (path, weight, graph) if return_graph else (path, weight)
