@@ -64,13 +64,13 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     prev_dy = prev_coords[1] - prev_prev_coords[1]
 
     # Вычисляем угол для предыдущего сегмента
-    prev_angle = degrees(atan2(prev_dy, prev_dx)) if (prev_dx != 0 or prev_dy != 0) else 0
+    prev_angle = degrees(atan2(prev_dy, prev_dx)) if (prev_dx != 0 or prev_dy != 0) else curr_angle
     prev_angle = ((prev_angle + 180) % 360) - 180
 
     # Определяем поворот
-    if abs(curr_angle - prev_angle) > 10:  # Порог для игнорирования мелких изменений (в градусах)
-        angle_diff = curr_angle - prev_angle
-        angle_diff = ((angle_diff + 180) % 360) - 180  # Нормализация разницы углов
+    angle_diff = curr_angle - prev_angle
+    angle_diff = ((angle_diff + 180) % 360) - 180  # Нормализация разницы углов
+    if abs(angle_diff) > 10:  # Порог для игнорирования мелких изменений (в градусах)
         if -180 < angle_diff <= -10:
             return "поверните налево"  # Против часовой стрелки
         elif 10 <= angle_diff < 180:
@@ -91,9 +91,14 @@ def get_vertex_details(vertex: str, db: Session) -> tuple:
             return room.name, room.cab_id
         return vertex, None
     elif vertex_type == "segment":
-        return "лестницы", None if "_end" in vertex or "_start" in vertex else vertex
+        return "лестницы", None if "_end" in vertex or "_start" in vertex else vertex_id
     elif vertex_type == "outdoor":
         return f"Уличный сегмент {vertex_id}", None
+    elif vertex_type == "phantom":
+        parts = vertex_id.split("_")
+        room_id = parts[1]
+        room = db.query(Room).filter(Room.id == int(room_id)).first()
+        return f"Фантомная точка у {room.name if room else 'комнаты'}", None
     return vertex, None
 
 def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
@@ -169,14 +174,12 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
                                       initial_orientation="налево" if i == 1 else None, i=i)
             if direction.startswith("поверните"):
                 last_turn = direction
-                # Remove any simple direction (e.g., "налево", "направо") before adding the turn
                 if current_instruction and current_instruction[-1] in ["налево", "направо", "вперёд", "назад"]:
                     current_instruction.pop()
                 if not current_instruction:
-                    current_instruction.append("")  # Placeholder to keep structure
+                    current_instruction.append("")  # Placeholder
                 current_instruction.append(direction)
             elif direction != "вперёд":
-                # Only add simple direction if no turn has been detected in this segment
                 if not last_turn:
                     if not current_instruction:
                         current_instruction.append("")  # Placeholder
@@ -192,7 +195,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
             else:
                 current_instruction = [current_instruction[0] if current_instruction else ""]
                 current_instruction.append(f"пройдите вперёд до {destination}")
-            instructions.append(" ".join(filter(None, current_instruction)))  # Remove empty strings
+            instructions.append(" ".join(filter(None, current_instruction)))
 
         prev_prev_coords = prev_coords
         prev_coords = (coords[0], coords[1])
@@ -205,8 +208,8 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     logger.info(f"Received request to find route from {start} to {end}")
 
-    # Находим путь и граф
-    path, weight, graph = find_path(db, start, end, return_graph=True)
+    # Находим путь, граф и все ребра
+    path, weight, graph, all_edges = find_path(db, start, end, return_graph=True, return_all_edges=True)
     if not path:
         logger.warning("No path found")
         raise HTTPException(status_code=404, detail="Маршрут не найден")
@@ -220,151 +223,40 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     route = []
     current_floor_number = None
     floor_points = []
-    last_point = None
-    prev_vertex = None
-    transition_points = []
-
-    # Для отслеживания добавленных точек и избежания дубликатов
-    added_points = set()
+    added_points = set()  # Для избежания дубликатов
 
     for i, vertex in enumerate(path):
         try:
             # Разбираем вершину
-            if vertex.startswith("phantom_"):
-                parts = vertex.split("_")
-                if len(parts) != 5 or parts[0] != "phantom" or parts[1] != "room" or parts[3] != "segment":
-                    raise ValueError(f"Неверный формат фантомной вершины: {vertex}")
-
-                coords = graph.vertices[vertex]
-                floor_id = coords[2]
-                if floor_id != 0:
-                    floor = db.query(Floor).filter(Floor.id == floor_id).first()
-                    if not floor:
-                        raise ValueError(f"Этаж с id {floor_id} не найден")
-                    floor_number = floor.floor_number
-                else:
-                    floor_number = 0
-                logger.debug(
-                    f"Processing phantom vertex {vertex}: floor_id={floor_id}, floor_number={floor_number}, coords={coords}")
+            coords = graph.vertices[vertex]
+            floor_id = coords[2]
+            if floor_id != 0:
+                floor = db.query(Floor).filter(Floor.id == floor_id).first()
+                floor_number = floor.floor_number if floor else floor_id
             else:
-                vertex_type, vertex_id_part = vertex.split("_", 1)
-
-                coords = None
-                floor_id = None
-                floor_number = None
-                if vertex_type == "room":
-                    vertex_id = int(vertex_id_part)
-                    room = db.query(Room).filter(Room.id == vertex_id).first()
-                    if not room:
-                        raise ValueError(f"Комната {vertex} не найдена")
-                    coords = (room.cab_x, room.cab_y)
-                    floor_id = room.floor_id
-                    floor = db.query(Floor).filter(Floor.id == floor_id).first()
-                    if not floor:
-                        raise ValueError(f"Этаж с id {floor_id} не найден")
-                    floor_number = floor.floor_number
-                elif vertex_type == "segment":
-                    segment_id_part, position = vertex_id_part.rsplit("_", 1)
-                    segment_id = int(segment_id_part)
-                    segment = db.query(Segment).filter(Segment.id == segment_id).first()
-                    if not segment:
-                        raise ValueError(f"Сегмент {vertex} не найден")
-                    coords = (segment.start_x, segment.start_y) if position == "start" else (
-                    segment.end_x, segment.end_y)
-                    floor_id = segment.floor_id
-                    floor = db.query(Floor).filter(Floor.id == floor_id).first()
-                    if not floor:
-                        raise ValueError(f"Этаж с id {floor_id} не найден")
-                    floor_number = floor.floor_number
-                elif vertex_type == "outdoor":
-                    outdoor_id_part, position = vertex_id_part.rsplit("_", 1)
-                    outdoor_id = int(outdoor_id_part)
-                    outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == outdoor_id).first()
-                    if not outdoor:
-                        raise ValueError(f"Уличный сегмент {vertex} не найден")
-                    coords = (outdoor.start_x, outdoor.start_y) if position == "start" else (
-                    outdoor.end_x, outdoor.end_y)
-                    floor_id = 0
-                    floor_number = 0
-                else:
-                    raise ValueError(f"Неизвестный тип вершины: {vertex_type}")
-
-                logger.debug(
-                    f"Processing vertex {vertex}: {vertex_type}, floor_id={floor_id}, floor_number={floor_number}")
-
-            # Проверяем, нужно ли пропустить вершину (для соседних комнат)
-            skip_vertex = False
-            if prev_vertex and vertex.startswith("segment_"):
-                if prev_vertex.startswith("phantom_") and i + 1 < len(path):
-                    next_vertex = path[i + 1]
-                    if next_vertex.startswith("phantom_"):
-                        skip_vertex = True
-                        logger.debug(f"Skipping segment vertex {vertex} between phantom points")
+                floor_number = 0
 
             # Формируем точку
             point = {"x": coords[0], "y": coords[1]}
-            point_tuple = (coords[0], coords[1])  # Для проверки дубликатов
+            point_tuple = (coords[0], coords[1])
 
-            # Проверяем, является ли текущая вершина частью перехода между этажами
-            if prev_vertex and vertex.startswith("segment_") and prev_vertex.startswith("segment_"):
-                prev_segment_id = int(prev_vertex.split("_")[1])
-                curr_segment_id = int(vertex.split("_")[1])
-                connection = db.query(Connection).filter(
-                    Connection.type == "лестница",
-                    ((Connection.from_segment_id == prev_segment_id) & (Connection.to_segment_id == curr_segment_id)) |
-                    ((Connection.from_segment_id == curr_segment_id) & (Connection.to_segment_id == prev_segment_id))
-                ).first()
-                if connection:
-                    prev_segment = db.query(Segment).filter(Segment.id == prev_segment_id).first()
-                    curr_segment = db.query(Segment).filter(Segment.id == curr_segment_id).first()
-                    transition_points = [
-                        {"x": prev_segment.start_x, "y": prev_segment.start_y},
-                        {"x": prev_segment.end_x, "y": prev_segment.end_y},
-                        {"x": curr_segment.end_x, "y": curr_segment.end_y},
-                        {"x": curr_segment.start_x, "y": curr_segment.start_y}
-                    ]
-                    logger.debug(
-                        f"Transition between segments {prev_segment_id} and {curr_segment_id}: {transition_points}")
-
-            # Добавляем точку в маршрут
-            if current_floor_number is None:  # Первый этаж
+            # Проверяем смена этажа
+            if current_floor_number is None:
                 current_floor_number = floor_number
                 if point_tuple not in added_points:
                     floor_points.append(point)
                     added_points.add(point_tuple)
-            elif floor_number != current_floor_number:  # Смена этажа
+            elif floor_number != current_floor_number:
                 if floor_points:
-                    # Добавляем точки перехода на предыдущем этаже
-                    if transition_points:
-                        for tp in transition_points[:2]:
-                            tp_tuple = (tp["x"], tp["y"])
-                            if tp_tuple not in added_points:
-                                floor_points.append(tp)
-                                added_points.add(tp_tuple)
-                        transition_points = transition_points[2:]
                     route.append({"floor": current_floor_number, "points": floor_points})
-                # Создаём новый список точек
-                added_points.clear()  # Очищаем для нового этажа
-                floor_points = []
-                if transition_points:
-                    for tp in transition_points:
-                        tp_tuple = (tp["x"], tp["y"])
-                        if tp_tuple not in added_points:
-                            floor_points.append(tp)
-                            added_points.add(tp_tuple)
-                    transition_points = []
-                if point_tuple not in added_points:
-                    floor_points.append(point)
-                    added_points.add(point_tuple)
+                added_points.clear()
+                floor_points = [point] if point_tuple not in added_points else []
+                added_points.add(point_tuple)
                 current_floor_number = floor_number
-            elif not skip_vertex:  # Добавляем точку, если не пропускаем
+            else:
                 if point_tuple not in added_points:
                     floor_points.append(point)
                     added_points.add(point_tuple)
-
-            last_point = point
-            prev_vertex = vertex
-            logger.debug(f"Added point for vertex {vertex}: x={coords[0]}, y={coords[1]}")
 
         except Exception as e:
             logger.error(f"Error processing vertex {vertex}: {str(e)}")
@@ -373,5 +265,13 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     if floor_points:
         route.append({"floor": current_floor_number, "points": floor_points})
 
-    # Добавляем текстовые инструкции в ответ
-    return {"path": route, "weight": weight, "instructions": instructions}
+    # Добавляем все ребра для отображения линий
+    all_lines = [{"from": edge[0], "to": edge[1], "weight": edge[2]} for edge in all_edges]
+
+    # Добавляем текстовые инструкции и все линии в ответ
+    return {
+        "path": route,
+        "weight": weight,
+        "instructions": instructions,
+        "all_lines": all_lines
+    }
