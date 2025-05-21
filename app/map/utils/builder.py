@@ -120,6 +120,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         vertex = f"room_{room.id}"
         if vertex not in graph.vertices and room.cab_x is not None and room.cab_y is not None:
             graph.add_vertex(vertex, (room.cab_x, room.cab_y, room.floor_id))
+            print(f"[INFO] Added room vertex: {vertex}, coords=({room.cab_x}, {room.cab_y}, {room.floor_id})")
 
     segments = db.query(Segment).filter(
         Segment.id.in_(relevant_segment_ids)
@@ -129,12 +130,15 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         end_vertex = f"segment_{segment.id}_end"
         if start_vertex not in graph.vertices and segment.start_x is not None and segment.start_y is not None:
             graph.add_vertex(start_vertex, (segment.start_x, segment.start_y, segment.floor_id))
+            print(f"[INFO] Added segment start vertex: {start_vertex}, coords=({segment.start_x}, {segment.start_y}, {segment.floor_id})")
         if end_vertex not in graph.vertices and segment.end_x is not None and segment.end_y is not None:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
+            print(f"[INFO] Added segment end vertex: {end_vertex}, coords=({segment.end_x}, {segment.end_y}, {segment.floor_id})")
         if (segment.start_x is not None and segment.start_y is not None and
             segment.end_x is not None and segment.end_y is not None):
             weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
             graph.add_edge(start_vertex, end_vertex, weight)
+            print(f"[INFO] Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
 
     outdoor_segments = db.query(OutdoorSegment).filter(
         OutdoorSegment.id.in_(relevant_outdoor_ids)
@@ -146,10 +150,13 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             outdoor.end_x is not None and outdoor.end_y is not None):
             if start_vertex not in graph.vertices:
                 graph.add_vertex(start_vertex, (outdoor.start_x, outdoor.start_y, None))
+                print(f"[INFO] Added outdoor start vertex: {start_vertex}, coords=({outdoor.start_x}, {outdoor.start_y}, None)")
             if end_vertex not in graph.vertices:
                 graph.add_vertex(end_vertex, (outdoor.end_x, outdoor.end_y, None))
+                print(f"[INFO] Added outdoor end vertex: {end_vertex}, coords=({outdoor.end_x}, {outdoor.end_y}, None)")
             weight = sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2)
             graph.add_edge(start_vertex, end_vertex, weight)
+            print(f"[INFO] Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
 
     # Добавляем ребра на основе соединений
     for conn in all_connections:
@@ -160,10 +167,12 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             room_vertex = f"room_{conn.room_id}"
             segment = next((s for s in segments if s.id == conn.segment_id), None)
             if not segment or room_vertex not in graph.vertices:
+                print(f"[INFO] Skipped door connection for room {room_vertex} to segment {conn.segment_id}: room or segment missing")
                 continue
             segment_start = f"segment_{conn.segment_id}_start"
             segment_end = f"segment_{conn.segment_id}_end"
             if segment_start not in graph.vertices or segment_end not in graph.vertices:
+                print(f"[INFO] Skipped door connection: segment vertices {segment_start} or {segment_end} not in graph")
                 continue
 
             phantom_vertex = f"phantom_room_{conn.room_id}_segment_{conn.segment_id}"
@@ -173,6 +182,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             phantom_coords = find_phantom_point(room_coords, start_coords, end_coords)
             if phantom_coords[0] is not None and phantom_coords[1] is not None:
                 graph.add_vertex(phantom_vertex, phantom_coords)
+                print(f"[INFO] Added phantom vertex: {phantom_vertex}, coords={phantom_coords}")
 
                 dist_to_phantom = sqrt((room_coords[0] - phantom_coords[0]) ** 2 + (room_coords[1] - phantom_coords[1]) ** 2)
                 graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom)
@@ -180,17 +190,22 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
                 graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
                 graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
+                print(f"[INFO] Added edges for door: {room_vertex} -> {phantom_vertex} (weight={dist_to_phantom}), {phantom_vertex} -> {segment_start} (weight={dist_phantom_to_start}), {phantom_vertex} -> {segment_end} (weight={dist_phantom_to_end})")
 
         # Соединение между сегментами (лестница)
         elif conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
             from_segment = next((s for s in segments if s.id == conn.from_segment_id), None)
             to_segment = next((s for s in segments if s.id == conn.to_segment_id), None)
             if not from_segment or not to_segment:
+                print(f"[INFO] Skipped staircase: from_segment {conn.from_segment_id} or to_segment {conn.to_segment_id} not found")
                 continue
             from_vertex = f"segment_{conn.from_segment_id}_end"
             to_vertex = f"segment_{conn.to_segment_id}_start"
             if from_vertex in graph.vertices and to_vertex in graph.vertices:
                 graph.add_edge(from_vertex, to_vertex, weight)
+                print(f"[INFO] Added staircase edge: {from_vertex} -> {to_vertex}, weight={weight}")
+            else:
+                print(f"[INFO] Skipped staircase edge: {from_vertex} or {to_vertex} not in graph")
 
         # Соединение между сегментом и outdoor (улица или дверь)
         elif (conn.type in ["улица", "дверь"]) and ((conn.from_segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
@@ -199,11 +214,17 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 to_outdoor = next((o for o in outdoor_segments if o.id == conn.to_outdoor_id), None)
                 if from_segment and to_outdoor and f"segment_{conn.from_segment_id}_end" in graph.vertices and f"outdoor_{conn.to_outdoor_id}_start" in graph.vertices:
                     graph.add_edge(f"segment_{conn.from_segment_id}_end", f"outdoor_{conn.to_outdoor_id}_start", weight)
+                    print(f"[INFO] Added segment-to-outdoor edge: segment_{conn.from_segment_id}_end -> outdoor_{conn.to_outdoor_id}_start, weight={weight}")
+                else:
+                    print(f"[INFO] Skipped segment-to-outdoor edge: segment_{conn.from_segment_id}_end or outdoor_{conn.to_outdoor_id}_start not in graph")
             if conn.from_outdoor_id and conn.to_segment_id:
                 from_outdoor = next((o for o in outdoor_segments if o.id == conn.from_outdoor_id), None)
                 to_segment = next((s for s in segments if s.id == conn.to_segment_id), None)
                 if from_outdoor and to_segment and f"outdoor_{conn.from_outdoor_id}_end" in graph.vertices and f"segment_{conn.to_segment_id}_start" in graph.vertices:
                     graph.add_edge(f"outdoor_{conn.from_outdoor_id}_end", f"segment_{conn.to_segment_id}_start", weight)
+                    print(f"[INFO] Added outdoor-to-segment edge: outdoor_{conn.from_outdoor_id}_end -> segment_{conn.to_segment_id}_start, weight={weight}")
+                else:
+                    print(f"[INFO] Skipped outdoor-to-segment edge: outdoor_{conn.from_outdoor_id}_end or segment_{conn.to_segment_id}_start not in graph")
 
         # Дополнительная обработка соединений типа "дверь" между сегментами и outdoor
         elif conn.type == "дверь" and ((conn.segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
@@ -212,29 +233,63 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 to_outdoor = next((o for o in outdoor_segments if o.id == conn.to_outdoor_id), None)
                 if segment and to_outdoor and f"segment_{conn.segment_id}_end" in graph.vertices and f"outdoor_{conn.to_outdoor_id}_start" in graph.vertices:
                     graph.add_edge(f"segment_{conn.segment_id}_end", f"outdoor_{conn.to_outdoor_id}_start", weight)
+                    print(f"[INFO] Added door segment-to-outdoor edge: segment_{conn.segment_id}_end -> outdoor_{conn.to_outdoor_id}_start, weight={weight}")
+                else:
+                    print(f"[INFO] Skipped door segment-to-outdoor edge: segment_{conn.segment_id}_end or outdoor_{conn.to_outdoor_id}_start not in graph")
             if conn.from_outdoor_id and conn.to_segment_id:
                 from_outdoor = next((o for o in outdoor_segments if o.id == conn.from_outdoor_id), None)
                 to_segment = next((s for s in segments if s.id == conn.to_segment_id), None)
                 if from_outdoor and to_segment and f"outdoor_{conn.from_outdoor_id}_end" in graph.vertices and f"segment_{conn.to_segment_id}_start" in graph.vertices:
                     graph.add_edge(f"outdoor_{conn.from_outdoor_id}_end", f"segment_{conn.to_segment_id}_start", weight)
+                    print(f"[INFO] Added door outdoor-to-segment edge: outdoor_{conn.from_outdoor_id}_end -> segment_{conn.to_segment_id}_start, weight={weight}")
+                else:
+                    print(f"[INFO] Skipped door outdoor-to-segment edge: outdoor_{conn.from_outdoor_id}_end or segment_{conn.to_segment_id}_start not in graph")
 
-    # Соединение сегментов через outdoor для повышения связности
+    # Добавляем ребра между outdoor-сегментами для цепочек (например, outdoor_4 -> outdoor_3 -> outdoor_1)
+    outdoor_connections = {}
+    for conn in all_connections:
+        weight = conn.weight if conn.weight is not None else 1
+        if conn.type == "улица" and conn.from_outdoor_id and conn.to_outdoor_id:
+            from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
+            to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
+            if from_vertex in graph.vertices and to_vertex in graph.vertices:
+                if conn.from_outdoor_id not in outdoor_connections:
+                    outdoor_connections[conn.from_outdoor_id] = []
+                outdoor_connections[conn.from_outdoor_id].append((conn.to_outdoor_id, weight))
+                graph.add_edge(from_vertex, to_vertex, weight)
+                print(f"[INFO] Added outdoor-to-outdoor edge: {from_vertex} -> {to_vertex}, weight={weight}")
+            else:
+                print(f"[INFO] Skipped outdoor-to-outdoor edge: {from_vertex} or {to_vertex} not in graph")
+
+    # Соединяем сегменты через outdoor, учитывая цепочки
     segment_to_outdoor = {}
     outdoor_to_segment = {}
     for conn in all_connections:
         weight = conn.weight if conn.weight is not None else 1
-        if conn.from_segment_id and conn.to_outdoor_id:
-            segment_to_outdoor[conn.from_segment_id] = (conn.to_outdoor_id, weight)
+        if (conn.from_segment_id and conn.to_outdoor_id) or (conn.segment_id and conn.to_outdoor_id):
+            seg_id = conn.from_segment_id if conn.from_segment_id else conn.segment_id
+            segment_to_outdoor[seg_id] = (conn.to_outdoor_id, weight)
         if conn.from_outdoor_id and conn.to_segment_id:
             outdoor_to_segment[conn.from_outdoor_id] = (conn.to_segment_id, weight)
 
-    for segment_id, (outdoor_id, weight1) in segment_to_outdoor.items():
-        if outdoor_id in outdoor_to_segment:
-            target_segment_id, weight2 = outdoor_to_segment[outdoor_id]
-            from_vertex = f"segment_{segment_id}_end"
-            to_vertex = f"segment_{target_segment_id}_start"
-            if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                total_weight = weight1 + weight2
-                graph.add_edge(from_vertex, to_vertex, total_weight)
+    # Строим пути через outdoor-цепочки
+    for seg_id, (outdoor_id, weight1) in segment_to_outdoor.items():
+        current_outdoor = outdoor_id
+        total_weight = weight1
+        visited = set()
+        while current_outdoor in outdoor_connections and current_outdoor not in visited:
+            visited.add(current_outdoor)
+            for next_outdoor, outdoor_weight in outdoor_connections.get(current_outdoor, []):
+                if next_outdoor in outdoor_to_segment:
+                    target_seg_id, weight2 = outdoor_to_segment[next_outdoor]
+                    from_vertex = f"segment_{seg_id}_end"
+                    to_vertex = f"segment_{target_seg_id}_start"
+                    if from_vertex in graph.vertices and to_vertex in graph.vertices:
+                        final_weight = total_weight + outdoor_weight + weight2
+                        graph.add_edge(from_vertex, to_vertex, final_weight)
+                        print(f"[INFO] Added segment-to-segment via outdoor chain: {from_vertex} -> {to_vertex}, weight={final_weight}")
+                    break
+                total_weight += outdoor_weight
+                current_outdoor = next_outdoor
 
     return graph
