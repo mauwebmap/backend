@@ -61,7 +61,7 @@ def find_path(db, start: str, end: str, return_graph=False):
             path.append(start)
             path.reverse()
 
-            # Гарантируем включение всех точек сегментов/аутдоров
+            # Добавляем противоположные точки для сегментов/аутдоров
             final_path = []
             for i, vertex in enumerate(path):
                 final_path.append(vertex)

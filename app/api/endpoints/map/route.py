@@ -119,6 +119,15 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
                 last_turn = direction
             elif direction != "вперёд" and not last_turn:
                 current_instruction.append(direction)
+            # Добавляем информацию о прохождении через сегменты/аутдоры
+            if "outdoor_" in vertex:
+                outdoor_name, _ = get_vertex_details(vertex, db)
+                if not last_turn or "поверните" not in last_turn.lower():
+                    current_instruction.append(f"пройдите через {outdoor_name}")
+                else:
+                    instructions.append(f"{current_instruction[0]} {last_turn}")
+                    current_instruction = [f"пройдите через {outdoor_name}"]
+                    last_turn = None
 
         if i == len(path) - 1:
             destination = f"{vertex_name} номер {vertex_number}" if vertex_number else vertex_name
@@ -149,9 +158,9 @@ def simplify_route(points: list) -> list:
             continue
         angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
         angle = abs(((angle + 180) % 360) - 180)
-        # Сохраняем точку, если она является началом или концом сегмента/аутдора
-        if "start" in prev_point.get("vertex", "") or "end" in prev_point.get("vertex", "") or \
-           "start" in next_point.get("vertex", "") or "end" in next_point.get("vertex", ""):
+        # Не упрощаем точки, если они являются началом или концом сегмента/аутдора
+        vertex = curr_point.get("vertex", "")
+        if "start" in vertex or "end" in vertex:
             simplified.append(curr_point)
         elif 70 <= angle <= 110:
             simplified.append(curr_point)
@@ -184,20 +193,22 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
         floor_id = coords[2]
         floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
-        point = {"x": coords[0], "y": coords[1], "vertex": vertex}  # Добавляем метку вершины
+        point = {"x": coords[0], "y": coords[1], "vertex": vertex}
         if current_floor_number is None:
             current_floor_number = floor_number
             floor_points.append(point)
         elif floor_number != current_floor_number:
             if floor_points:
-                route.append({"floor": current_floor_number, "points": simplify_route(floor_points)})
+                simplified_points = simplify_route(floor_points)
+                route.append({"floor": current_floor_number, "points": simplified_points})
             floor_points = [point]
             current_floor_number = floor_number
         else:
             floor_points.append(point)
 
     if floor_points:
-        route.append({"floor": current_floor_number, "points": simplify_route(floor_points)})
+        simplified_points = simplify_route(floor_points)
+        route.append({"floor": current_floor_number, "points": simplified_points})
 
     logger.info(f"Generated route: {route}")
     return {"path": route, "weight": weight, "instructions": instructions}
