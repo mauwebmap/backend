@@ -1,61 +1,44 @@
+from heapq import heappush, heappop
 from math import sqrt
-import logging
-from sqlalchemy.orm import Session
-from app.map.utils.builder import build_graph, Graph
-import heapq
+from .graph import Graph
 
-logger = logging.getLogger(__name__)
+def heuristic(a: tuple, b: tuple) -> float:
+    # Эвклидово расстояние между точками с учетом этажей
+    x1, y1, floor1 = a
+    x2, y2, floor2 = b
+    floor_cost = abs(floor1 - floor2) * 100  # Штраф за смену этажа
+    return sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2) + floor_cost
 
-def a_star(graph: Graph, start: str, goals: list) -> tuple:
-    def heuristic(a, b):
-        xa, ya, fa = graph.vertices[a]
-        xb, yb, fb = graph.vertices[b]
-        floor_penalty = abs(fa - fb) * 5 if fa != fb else 0  # Снижаем штраф до 5
-        return sqrt((xa - xb) ** 2 + (ya - yb) ** 2) + floor_penalty
+def find_path(db, start: str, end: str, return_graph=False):
+    graph = build_graph(db, start, end)
+    if start not in graph.vertices or end not in graph.vertices:
+        return [], float('inf'), graph if return_graph else []
 
-    if start not in graph.vertices:
-        logger.error(f"Start vertex {start} not in graph")
-        return None, None
-    if not all(goal in graph.vertices for goal in goals):
-        logger.error(f"One of the goals {goals} not in graph")
-        return None, None
-
-    open_set = [(0, start)]
+    open_set = [(0, start)]  # (f_score, vertex)
     came_from = {}
     g_score = {start: 0}
-    f_score = {start: heuristic(start, min(goals, key=lambda g: heuristic(start, g)))}
+    f_score = {start: heuristic(graph.vertices[start], graph.vertices[end])}
 
     while open_set:
-        f, current = heapq.heappop(open_set)
-        logger.info(f"Processing vertex: {current}, f_score={f}")
-        if current in goals:
+        current_f, current = heappop(open_set)
+
+        if current == end:
             path = []
             while current in came_from:
                 path.append(current)
                 current = came_from[current]
             path.append(start)
             path.reverse()
-            logger.info(f"Path found: {path}, weight={g_score[path[-1]]}")
-            return path, g_score[path[-1]]
+            weight = g_score[end]
+            return path, weight, graph if return_graph else path
 
-        for neighbor, weight, _ in graph.edges.get(current, []):
+        for neighbor, weight in graph.edges.get(current, []):
             tentative_g_score = g_score[current] + weight
+
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                f_score[neighbor] = tentative_g_score + heuristic(neighbor, min(goals, key=lambda g: heuristic(neighbor, g)))
-                heapq.heappush(open_set, (f_score[neighbor], neighbor))
-            logger.info(f"Checked neighbor {neighbor}, tentative_g_score={tentative_g_score}, g_score={g_score.get(neighbor)}")
+                f_score[neighbor] = tentative_g_score + heuristic(graph.vertices[neighbor], graph.vertices[end])
+                heappush(open_set, (f_score[neighbor], neighbor))
 
-    logger.warning(f"Path from {start} to {goals} not found. Final g_scores: {g_score}")
-    return None, None
-
-def find_path(db: Session, start: str, end: str, return_graph: bool = False) -> tuple:
-    graph = build_graph(db, start, end)
-    goals = [end] if isinstance(end, str) else end
-    path, weight = a_star(graph, start, goals)
-    if path is None:
-        logger.warning(f"No path found from {start} to {end}")
-    else:
-        logger.info(f"Path found from {start} to {end}, weight={weight}")
-    return (path, weight, graph) if return_graph else (path, weight)
+    return [], float('inf'), graph if return_graph else []

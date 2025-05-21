@@ -167,9 +167,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 from_vertex = f"segment_{conn.from_segment_id}_end"
                 to_vertex = f"segment_{conn.to_segment_id}_start"
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                    graph.add_edge(from_vertex, to_vertex, weight)
-                    graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
-                    logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={weight}")
+                    if (from_vertex, to_vertex) not in graph.edges or (to_vertex, from_vertex) not in graph.edges:
+                        graph.add_edge(from_vertex, to_vertex, weight)
+                        graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
+                        logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={weight}")
 
         elif (conn.type in ["улица", "дверь"]) and ((conn.from_segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
             if conn.from_segment_id and conn.to_outdoor_id:
@@ -179,9 +180,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     from_vertex = f"segment_{conn.from_segment_id}_end"
                     to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                        graph.add_edge(from_vertex, to_vertex, weight)
-                        graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
-                        logger.info(f"Added edge (outdoor start): {from_vertex} <-> {to_vertex}, weight={weight}")
+                        if (from_vertex, to_vertex) not in graph.edges or (to_vertex, from_vertex) not in graph.edges:
+                            graph.add_edge(from_vertex, to_vertex, weight)
+                            graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
+                            logger.info(f"Added edge (outdoor start): {from_vertex} <-> {to_vertex}, weight={weight}")
             if conn.from_outdoor_id and conn.to_segment_id:
                 from_outdoor = next((o for o in outdoor_segments if o.id == conn.from_outdoor_id), None)
                 to_segment = next((s for s in segments if s.id == conn.to_segment_id), None)
@@ -189,9 +191,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
                     to_vertex = f"segment_{conn.to_segment_id}_start"
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                        graph.add_edge(from_vertex, to_vertex, weight)
-                        graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
-                        logger.info(f"Added edge (outdoor end): {from_vertex} <-> {to_vertex}, weight={weight}")
+                        if (from_vertex, to_vertex) not in graph.edges or (to_vertex, from_vertex) not in graph.edges:
+                            graph.add_edge(from_vertex, to_vertex, weight)
+                            graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
+                            logger.info(f"Added edge (outdoor end): {from_vertex} <-> {to_vertex}, weight={weight}")
 
         elif conn.type == "улица" and conn.from_outdoor_id and conn.to_outdoor_id:
             from_outdoor = next((o for o in outdoor_segments if o.id == conn.from_outdoor_id), None)
@@ -200,9 +203,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
                 to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                    graph.add_edge(from_vertex, to_vertex, weight)
-                    graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
-                    logger.info(f"Added edge (street): {from_vertex} <-> {to_vertex}, weight={weight}")
+                    if (from_vertex, to_vertex) not in graph.edges or (to_vertex, from_vertex) not in graph.edges:
+                        graph.add_edge(from_vertex, to_vertex, weight)
+                        graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
+                        logger.info(f"Added edge (street): {from_vertex} <-> {to_vertex}, weight={weight}")
 
     logger.info(f"Final vertices: {list(graph.vertices.keys())}")
     logger.info(f"Final edges: {dict(graph.edges)}")
