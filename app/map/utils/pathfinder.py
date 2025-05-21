@@ -33,7 +33,7 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
                 current = came_from[current]
             path.append(start)
             path.reverse()
-            logger.debug(f"Path found: {path}, weight={g_score[path[-1]]}")
+            logger.info(f"Path found: {path}, weight={g_score[path[-1]]}")
             return path, g_score[path[-1]]
 
         for neighbor, weight, _ in graph.edges.get(current, []):
@@ -43,7 +43,7 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
                 g_score[neighbor] = tentative_g_score
                 f_score[neighbor] = tentative_g_score + heuristic(neighbor, min(goals, key=lambda g: heuristic(neighbor, g)))
                 heapq.heappush(open_set, (f_score[neighbor], neighbor))
-            logger.debug(f"Checked neighbor {neighbor}, tentative_g_score={tentative_g_score}, g_score={g_score.get(neighbor)}")
+            logger.info(f"Checked neighbor {neighbor}, tentative_g_score={tentative_g_score}, g_score={g_score.get(neighbor)}")
 
     logger.warning(f"Path from {start} to {goals} not found")
     return None, None

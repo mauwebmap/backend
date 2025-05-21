@@ -48,21 +48,21 @@ def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
         if not room:
             raise ValueError(f"Комната {vertex} не найдена")
         graph.add_vertex(vertex, (room.cab_x, room.cab_y, room.floor_id))
-        logger.debug(f"Added room vertex: {vertex} -> {(room.cab_x, room.cab_y, room.floor_id)}")
+        logger.info(f"Added room vertex: {vertex} -> {(room.cab_x, room.cab_y, room.floor_id)}")
     elif type_ == "segment":
         segment = db.query(Segment).filter(Segment.id == id_).first()
         if not segment:
             raise ValueError(f"Сегмент {vertex} не найден")
         graph.add_vertex(f"segment_{id_}_start", (segment.start_x, segment.start_y, segment.floor_id))
         graph.add_vertex(f"segment_{id_}_end", (segment.end_x, segment.end_y, segment.floor_id))
-        logger.debug(f"Added segment vertices: segment_{id_}_start -> {(segment.start_x, segment.start_y, segment.floor_id)}, segment_{id_}_end -> {(segment.end_x, segment.end_y, segment.floor_id)}")
+        logger.info(f"Added segment vertices: segment_{id_}_start -> {(segment.start_x, segment.start_y, segment.floor_id)}, segment_{id_}_end -> {(segment.end_x, segment.end_y, segment.floor_id)}")
     elif type_ == "outdoor":
         outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == id_).first()
         if not outdoor:
             raise ValueError(f"Уличный сегмент {vertex} не найден")
         graph.add_vertex(f"outdoor_{id_}_start", (outdoor.start_x, outdoor.start_y, 0))
         graph.add_vertex(f"outdoor_{id_}_end", (outdoor.end_x, outdoor.end_y, 0))
-        logger.debug(f"Added outdoor segment vertices: outdoor_{id_}_start -> {(outdoor.start_x, outdoor.start_y, 0)}, outdoor_{id_}_end -> {(outdoor.end_x, outdoor.end_y, 0)}")
+        logger.info(f"Added outdoor segment vertices: outdoor_{id_}_start -> {(outdoor.start_x, outdoor.start_y, 0)}, outdoor_{id_}_end -> {(outdoor.end_x, outdoor.end_y, 0)}")
 
 def get_relevant_buildings(db: Session, start: str, end: str) -> set:
     building_ids = set()
@@ -76,7 +76,7 @@ def get_relevant_buildings(db: Session, start: str, end: str) -> set:
             segment = db.query(Segment).filter(Segment.id == id_).first()
             if segment and segment.building_id:
                 building_ids.add(segment.building_id)
-    logger.debug(f"Relevant building IDs: {building_ids}")
+    logger.info(f"Relevant building IDs: {building_ids}")
     return building_ids
 
 def get_relevant_floors(db: Session, start: str, end: str) -> set:
@@ -92,7 +92,7 @@ def get_relevant_floors(db: Session, start: str, end: str) -> set:
             if segment and segment.floor_id:
                 floor_ids.add(segment.floor_id)
     floor_ids.add(0)  # Для outdoor и первого этажа
-    logger.debug(f"Relevant floor IDs: {floor_ids}")
+    logger.info(f"Relevant floor IDs: {floor_ids}")
     return floor_ids
 
 def build_graph(db: Session, start: str, end: str) -> Graph:
@@ -125,7 +125,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
         weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
-        logger.debug(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
+        logger.info(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
 
     outdoor_segments = db.query(OutdoorSegment).all()  # Все outdoor для межзданий
     for outdoor in outdoor_segments:
@@ -137,7 +137,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(end_vertex, (outdoor.end_x, outdoor.end_y, 0))
         weight = sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
-        logger.debug(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
+        logger.info(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
 
     connections = db.query(Connection).all()  # Все соединения для межзданий
     for conn in connections:
@@ -161,7 +161,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
                     graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
                     graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
-                    logger.debug(f"Added phantom vertex: {phantom_vertex} -> {phantom_coords}")
+                    logger.info(f"Added phantom vertex: {phantom_vertex} -> {phantom_coords}")
 
         elif conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
             from_segment = next((s for s in segments if s.id == conn.from_segment_id), None)
@@ -171,7 +171,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 to_vertex = f"segment_{conn.to_segment_id}_start"
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
                     graph.add_edge(from_vertex, to_vertex, weight)
-                    logger.debug(f"Added edge (ladder): {from_vertex} -> {to_vertex}, weight={weight}")
+                    logger.info(f"Added edge (ladder): {from_vertex} -> {to_vertex}, weight={weight}")
 
         elif (conn.type in ["улица", "дверь"]) and ((conn.from_segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
             if conn.from_segment_id and conn.to_outdoor_id:
@@ -182,7 +182,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
                         graph.add_edge(from_vertex, to_vertex, weight)
-                        logger.debug(f"Added edge (outdoor start): {from_vertex} -> {to_vertex}, weight={weight}")
+                        logger.info(f"Added edge (outdoor start): {from_vertex} -> {to_vertex}, weight={weight}")
             if conn.from_outdoor_id and conn.to_segment_id:
                 from_outdoor = next((o for o in outdoor_segments if o.id == conn.from_outdoor_id), None)
                 to_segment = next((s for s in segments if s.id == conn.to_segment_id), None)
@@ -191,8 +191,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     to_vertex = f"segment_{conn.to_segment_id}_start"
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
                         graph.add_edge(from_vertex, to_vertex, weight)
-                        logger.debug(f"Added edge (outdoor end): {from_vertex} -> {to_vertex}, weight={weight}")
+                        logger.info(f"Added edge (outdoor end): {from_vertex} -> {to_vertex}, weight={weight}")
 
-    logger.debug(f"Final vertices: {list(graph.vertices.keys())}")
-    logger.debug(f"Final edges: {dict(graph.edges)}")
+    logger.info(f"Final vertices: {list(graph.vertices.keys())}")
+    logger.info(f"Final edges: {dict(graph.edges)}")
     return graph
