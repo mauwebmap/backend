@@ -185,11 +185,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             from_vertex = f"segment_{conn.from_segment_id}_end"
             to_vertex = f"segment_{conn.to_segment_id}_start"
             if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                # Учитываем floor_id для фильтрации, если они указаны
-                from_floor = from_segment.floor_id if from_segment.floor_id else (conn.from_floor_id if conn.from_floor_id else None)
-                to_floor = to_segment.floor_id if to_segment.floor_id else (conn.to_floor_id if conn.to_floor_id else None)
-                if from_floor is None or to_floor is None or from_floor == to_floor:
-                    graph.add_edge(from_vertex, to_vertex, weight)
+                graph.add_edge(from_vertex, to_vertex, weight)
 
         # Соединение между сегментом и outdoor (улица или дверь)
         elif (conn.type in ["улица", "дверь"]) and ((conn.from_segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
@@ -203,5 +199,39 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 to_segment = next((s for s in segments if s.id == conn.to_segment_id), None)
                 if from_outdoor and to_segment and f"outdoor_{conn.from_outdoor_id}_end" in graph.vertices and f"segment_{conn.to_segment_id}_start" in graph.vertices:
                     graph.add_edge(f"outdoor_{conn.from_outdoor_id}_end", f"segment_{conn.to_segment_id}_start", weight)
+
+        # Дополнительная обработка соединений типа "дверь" между сегментами и outdoor
+        elif conn.type == "дверь" and ((conn.segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
+            if conn.segment_id and conn.to_outdoor_id:
+                segment = next((s for s in segments if s.id == conn.segment_id), None)
+                to_outdoor = next((o for o in outdoor_segments if o.id == conn.to_outdoor_id), None)
+                if segment and to_outdoor and f"segment_{conn.segment_id}_end" in graph.vertices and f"outdoor_{conn.to_outdoor_id}_start" in graph.vertices:
+                    graph.add_edge(f"segment_{conn.segment_id}_end", f"outdoor_{conn.to_outdoor_id}_start", weight)
+            if conn.from_outdoor_id and conn.to_segment_id:
+                from_outdoor = next((o for o in outdoor_segments if o.id == conn.from_outdoor_id), None)
+                to_segment = next((s for s in segments if s.id == conn.to_segment_id), None)
+                if from_outdoor and to_segment and f"outdoor_{conn.from_outdoor_id}_end" in graph.vertices and f"segment_{conn.to_segment_id}_start" in graph.vertices:
+                    graph.add_edge(f"outdoor_{conn.from_outdoor_id}_end", f"segment_{conn.to_segment_id}_start", weight)
+
+    # Попытка соединить сегменты через промежуточные outdoor, если прямого пути нет
+    # Ищем сегменты, которые не соединены напрямую
+    segment_to_outdoor = {}
+    outdoor_to_segment = {}
+    for conn in all_connections:
+        weight = conn.weight if conn.weight is not None else 1
+        if conn.segment_id and conn.to_outdoor_id:
+            segment_to_outdoor[conn.segment_id] = (conn.to_outdoor_id, weight)
+        if conn.from_outdoor_id and conn.to_segment_id:
+            outdoor_to_segment[conn.from_outdoor_id] = (conn.to_segment_id, weight)
+
+    # Проверяем, есть ли путь через outdoor
+    for segment_id, (outdoor_id, weight1) in segment_to_outdoor.items():
+        if outdoor_id in outdoor_to_segment:
+            target_segment_id, weight2 = outdoor_to_segment[outdoor_id]
+            from_vertex = f"segment_{segment_id}_end"
+            to_vertex = f"segment_{target_segment_id}_start"
+            if from_vertex in graph.vertices and to_vertex in graph.vertices:
+                total_weight = weight1 + weight2
+                graph.add_edge(from_vertex, to_vertex, total_weight)
 
     return graph
