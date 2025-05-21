@@ -17,7 +17,7 @@ def parse_vertex_id(vertex: str):
         raise ValueError(f"Неверный тип вершины: {type_}")
     return type_, int(id_)
 
-def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tuple) -> tuple:
+def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tuple, prev_coords: tuple = None) -> tuple:
     rx, ry, rfloor = room_coords
     sx, sy, sfloor = segment_start
     ex, ey, efloor = segment_end
@@ -28,7 +28,6 @@ def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tu
     if length_squared == 0:
         return sx, sy, sfloor
 
-    # Нормализованный вектор сегмента
     length = sqrt(length_squared)
     nx, ny = dx / length, dy / length
 
@@ -36,20 +35,31 @@ def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tu
     dot_product = (rx - sx) * nx + (ry - sy) * ny
     t = max(0, min(1, dot_product / length))
 
-    # Фантомная точка с небольшим смещением вдоль сегмента
+    # Базовая фантомная точка
     phantom_x = sx + t * dx
     phantom_y = sy + t * dy
-    # Учитываем этаж комнаты, если он отличается
     phantom_floor = rfloor if abs(rfloor - sfloor) <= 1 else sfloor
 
-    # Корректировка, чтобы избежать слишком близкого примыкания
-    offset = 10  # Минимальное расстояние от конца сегмента
-    if t < offset / length:
-        phantom_x, phantom_y = sx + nx * offset, sy + ny * offset
-    elif t > 1 - offset / length:
-        phantom_x, phantom_y = ex - nx * offset, ey - ny * offset
+    # Расстояния до начала и конца сегмента
+    dist_to_start = sqrt((phantom_x - sx) ** 2 + (phantom_y - sy) ** 2)
+    dist_to_end = sqrt((phantom_x - ex) ** 2 + (phantom_y - ey) ** 2)
+    segment_mid_dist = length / 2
 
-    return phantom_x, phantom_y, phantom_floor
+    # Проверяем, ближе ли фантомная точка к середине, чем к концам
+    if dist_to_start > segment_mid_dist and dist_to_end > segment_mid_dist:
+        return phantom_x, phantom_y, phantom_floor
+
+    # Если есть предыдущая точка, выбираем сторону сегмента
+    if prev_coords:
+        prev_x, prev_y, _ = prev_coords
+        prev_to_start = sqrt((prev_x - sx) ** 2 + (prev_y - sy) ** 2)
+        prev_to_end = sqrt((prev_x - ex) ** 2 + (prev_y - ey) ** 2)
+        if prev_to_start < prev_to_end:
+            return sx, sy, sfloor
+        return ex, ey, efloor
+
+    # По умолчанию возвращаем ближайший конец
+    return (sx, sy, sfloor) if dist_to_start < dist_to_end else (ex, ey, efloor)
 
 def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
     type_, id_ = parse_vertex_id(vertex)
@@ -102,7 +112,7 @@ def get_relevant_floors(db: Session, start: str, end: str) -> set:
                 floor_ids.add(room.floor_id)
         elif type_ == "segment":
             segment = db.query(Segment).filter(Segment.id == id_).first()
-            if segment and segment.floor_id:
+            if segment and floor_id:
                 floor_ids.add(segment.floor_id)
     floor_ids.add(1)
     logger.info(f"Relevant floor IDs: {floor_ids}")
@@ -141,7 +151,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(start_vertex, (segment.start_x, segment.start_y, segment.floor_id))
         if end_vertex not in graph.vertices:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
-        weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
+        weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.end_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
         graph.add_edge(end_vertex, start_vertex, weight)  # Двунаправленное ребро
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
@@ -154,7 +164,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(start_vertex, (outdoor.start_x, outdoor.start_y, 1))
         if end_vertex not in graph.vertices:
             graph.add_vertex(end_vertex, (outdoor.end_x, outdoor.end_y, 1))
-        weight = sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.end_y) ** 2)
+        weight = outdoor.weight if outdoor.weight else sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.end_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
         graph.add_edge(end_vertex, start_vertex, weight)  # Двунаправленное ребро
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
@@ -172,6 +182,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     room_coords = graph.vertices[room_vertex]
                     start_coords = graph.vertices[segment_start]
                     end_coords = graph.vertices[segment_end]
+                    # Пропускаем фантом, если предыдущая точка не задана (берём начало или конец)
                     phantom_coords = find_phantom_point(room_coords, start_coords, end_coords)
                     phantom_vertex = f"phantom_room_{conn.room_id}_segment_{conn.segment_id}"
                     graph.add_vertex(phantom_vertex, phantom_coords)
@@ -192,7 +203,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
                     if (from_vertex, to_vertex) not in graph.edges:
                         graph.add_edge(from_vertex, to_vertex, weight)
-                        graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
+                        graph.add_edge(to_vertex, from_vertex, weight)
                         logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={weight}")
 
         elif (conn.type in ["улица", "дверь"]) and ((conn.from_segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
@@ -205,7 +216,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
                         if (from_vertex, to_vertex) not in graph.edges:
                             graph.add_edge(from_vertex, to_vertex, weight)
-                            graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
+                            graph.add_edge(to_vertex, from_vertex, weight)
                             logger.info(f"Added edge (outdoor start): {from_vertex} <-> {to_vertex}, weight={weight}")
             if conn.from_outdoor_id and conn.to_segment_id:
                 from_outdoor = next((o for o in outdoor_segments if o.id == conn.from_outdoor_id), None)
@@ -216,7 +227,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
                         if (from_vertex, to_vertex) not in graph.edges:
                             graph.add_edge(from_vertex, to_vertex, weight)
-                            graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
+                            graph.add_edge(to_vertex, from_vertex, weight)
                             logger.info(f"Added edge (outdoor end): {from_vertex} <-> {to_vertex}, weight={weight}")
 
         elif conn.type == "улица" and conn.from_outdoor_id and conn.to_outdoor_id:
@@ -228,7 +239,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
                     if (from_vertex, to_vertex) not in graph.edges:
                         graph.add_edge(from_vertex, to_vertex, weight)
-                        graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
+                        graph.add_edge(to_vertex, from_vertex, weight)
                         logger.info(f"Added edge (street): {from_vertex} <-> {to_vertex}, weight={weight}")
 
     logger.info(f"Graph built successfully with {len(graph.vertices)} vertices")
