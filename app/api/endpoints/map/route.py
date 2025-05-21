@@ -18,8 +18,9 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
                   i: int = 0) -> str:
     curr_dx = curr_coords[0] - prev_coords[0]
     curr_dy = curr_coords[1] - prev_coords[1]
-    if curr_dx == 0 and curr_dy == 0:
-        return "вперёд"
+    distance = sqrt(curr_dx ** 2 + curr_dy ** 2)
+    if distance < 10:  # Игнорируем мелкие движения
+        return "вперёд" if prev_direction in ["вперёд", None] else prev_direction
 
     curr_angle = degrees(atan2(curr_dy, curr_dx))
     curr_angle = ((curr_angle + 180) % 360) - 180
@@ -39,9 +40,7 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     prev_angle = ((prev_angle + 180) % 360) - 180
 
     angle_diff = ((curr_angle - prev_angle + 180) % 360) - 180
-    distance = sqrt(curr_dx ** 2 + curr_dy ** 2)
-    # Игнорируем мелкие движения (< 10 единиц) и повороты < 30 градусов
-    if distance < 10 or abs(angle_diff) < 30:
+    if abs(angle_diff) < 30:
         return "вперёд" if prev_direction in ["вперёд", None] else base_direction
     return "поверните налево" if -180 < angle_diff <= -30 else "поверните направо"
 
@@ -106,7 +105,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
             direction = get_direction(prev_prev_coords, prev_coords, (coords[0], coords[1]), last_turn, i)
             logger.info(f"Direction for {vertex}: {direction}")
             if direction.startswith("поверните"):
-                if last_turn and "повerните" in last_turn.lower():
+                if last_turn and "поверните" in last_turn.lower():
                     current_instruction[-1] = direction
                 else:
                     current_instruction.append(direction)
@@ -129,7 +128,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
     return instructions
 
 def simplify_route(points: list) -> list:
-    """Упрощает маршрут, удаляя избыточные точки."""
+    """Упрощает маршрут, удаляя избыточные точки с учетом расстояния."""
     if len(points) < 3:
         return points
     simplified = [points[0]]
@@ -141,12 +140,14 @@ def simplify_route(points: list) -> list:
         dx2, dy2 = next_point["x"] - curr_point["x"], next_point["y"] - curr_point["y"]
         dist1 = sqrt(dx1 ** 2 + dy1 ** 2)
         dist2 = sqrt(dx2 ** 2 + dy2 ** 2)
-        # Пропускаем точку, если расстояние мало или направление почти не меняется
-        if dist1 < 20 and dist2 < 20:
+        total_dist = dist1 + dist2
+        direct_dist = sqrt((next_point["x"] - prev_point["x"]) ** 2 + (next_point["y"] - prev_point["y"]) ** 2)
+        # Удаляем точку, если общий путь через нее не превышает прямой путь более чем на 10 единиц
+        if total_dist - direct_dist < 10:
             continue
         angle1 = atan2(dy1, dx1) if (dx1 != 0 or dy1 != 0) else 0
         angle2 = atan2(dy2, dx2) if (dx2 != 0 or dy2 != 0) else 0
-        if abs(angle1 - angle2) < 0.2:  # Увеличен порог для упрощения
+        if abs(angle1 - angle2) < 0.2:
             continue
         simplified.append(curr_point)
     simplified.append(points[-1])

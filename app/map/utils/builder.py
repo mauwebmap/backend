@@ -135,6 +135,9 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         weight = sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.end_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
         logger.info(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
+    if "outdoor_4_end" in graph.vertices and "outdoor_2_start" in graph.vertices:
+        graph.add_edge("outdoor_4_end", "outdoor_2_start", 10.0)
+        logger.info(f"Added temporary edge: outdoor_4_end -> outdoor_2_start, weight=10.0")
 
     # Добавляем связи между outdoor_segment, если они пересекаются
     for i, outdoor1 in enumerate(outdoor_segments):
