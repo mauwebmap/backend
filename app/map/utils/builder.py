@@ -4,7 +4,7 @@ from app.map.models.segment import Segment
 from app.map.models.connection import Connection
 from app.map.models.outdoor_segment import OutdoorSegment
 from app.map.utils.graph import Graph
-from math import sqrt
+from math import sqrt, atan2, degrees
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,25 +18,38 @@ def parse_vertex_id(vertex: str):
     return type_, int(id_)
 
 def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tuple) -> tuple:
-    rx, ry, _ = room_coords
+    rx, ry, rfloor = room_coords
     sx, sy, sfloor = segment_start
-    ex, ey, _ = segment_end
+    ex, ey, efloor = segment_end
 
     dx = ex - sx
     dy = ey - sy
-    if dx == 0 and dy == 0:
+    length_squared = dx * dx + dy * dy
+    if length_squared == 0:
         return sx, sy, sfloor
 
-    length_squared = dx * dx + dy * dy
-    px = rx - sx
-    py = ry - sy
-    dot_product = px * dx + py * dy
-    t = max(0, min(1, dot_product / length_squared))
+    # Нормализованный вектор сегмента
+    length = sqrt(length_squared)
+    nx, ny = dx / length, dy / length
 
+    # Проекция комнаты на линию сегмента
+    dot_product = (rx - sx) * nx + (ry - sy) * ny
+    t = max(0, min(1, dot_product / length))
+
+    # Фантомная точка с небольшим смещением вдоль сегмента
     phantom_x = sx + t * dx
     phantom_y = sy + t * dy
+    # Учитываем этаж комнаты, если он отличается
+    phantom_floor = rfloor if abs(rfloor - sfloor) <= 1 else sfloor
 
-    return phantom_x, phantom_y, sfloor
+    # Корректировка, чтобы избежать слишком близкого примыкания
+    offset = 10  # Минимальное расстояние от конца сегмента
+    if t < offset / length:
+        phantom_x, phantom_y = sx + nx * offset, sy + ny * offset
+    elif t > 1 - offset / length:
+        phantom_x, phantom_y = ex - nx * offset, ey - ny * offset
+
+    return phantom_x, phantom_y, phantom_floor
 
 def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
     type_, id_ = parse_vertex_id(vertex)
@@ -130,7 +143,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
         weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
-        logger.info(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
+        graph.add_edge(end_vertex, start_vertex, weight)  # Двунаправленное ребро
+        logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
     outdoor_segments = db.query(OutdoorSegment).all()
     for outdoor in outdoor_segments:
@@ -142,7 +156,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(end_vertex, (outdoor.end_x, outdoor.end_y, 1))
         weight = sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.end_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
-        logger.info(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
+        graph.add_edge(end_vertex, start_vertex, weight)  # Двунаправленное ребро
+        logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
     connections = db.query(Connection).all()
     for conn in connections:

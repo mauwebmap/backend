@@ -1,16 +1,22 @@
 from heapq import heappush, heappop
-from math import sqrt
+from math import sqrt, atan2, degrees
 from .graph import Graph
 from .builder import build_graph
-import logging  # Добавляем импорт logging
+import logging
 
-logger = logging.getLogger(__name__)  # Создаем logger
+logger = logging.getLogger(__name__)
 
 def heuristic(a: tuple, b: tuple) -> float:
     x1, y1, floor1 = a
     x2, y2, floor2 = b
     floor_cost = abs(floor1 - floor2) * 100
-    return sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2) + floor_cost
+    # Штраф за резкие повороты (угол между векторами)
+    dx1, dy1 = x2 - x1, y2 - y1
+    angle_cost = 0
+    if dx1 != 0 or dy1 != 0:
+        angle = abs(degrees(atan2(dy1, dx1)))
+        angle_cost = min(45 - abs(angle % 90 - 45), 0) * 10  # Штраф до 450, если угол далеко от 0 или 90
+    return sqrt(dx1 * dx1 + dy1 * dy1) + floor_cost + angle_cost
 
 def find_path(db, start: str, end: str, return_graph=False):
     logger.info(f"Starting pathfinding from {start} to {end}")
