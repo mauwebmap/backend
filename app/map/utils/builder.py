@@ -40,26 +40,21 @@ def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tu
     phantom_y = sy + t * dy
     phantom_floor = rfloor if abs(rfloor - sfloor) <= 1 else sfloor
 
-    # Расстояния до начала и конца сегмента
-    dist_to_start = sqrt((phantom_x - sx) ** 2 + (phantom_y - sy) ** 2)
-    dist_to_end = sqrt((phantom_x - ex) ** 2 + (phantom_y - ey) ** 2)
-    segment_mid_dist = length / 2
-
-    # Проверяем, ближе ли фантомная точка к середине, чем к концам
-    if dist_to_start > segment_mid_dist and dist_to_end > segment_mid_dist:
-        return phantom_x, phantom_y, phantom_floor
-
-    # Если есть предыдущая точка, выбираем сторону сегмента
+    # Если есть предыдущая точка, выбираем направление
     if prev_coords:
-        prev_x, prev_y, _ = prev_coords
-        prev_to_start = sqrt((prev_x - sx) ** 2 + (prev_y - sy) ** 2)
-        prev_to_end = sqrt((prev_x - ex) ** 2 + (prev_y - ey) ** 2)
-        if prev_to_start < prev_to_end:
+        px, py, _ = prev_coords
+        # Вектор от предыдущей точки к началу сегмента
+        dx1, dy1 = sx - px, sy - py
+        # Вектор от предыдущей точки к концу сегмента
+        dx2, dy2 = ex - px, ey - py
+        # Выбираем ближайшую точку на прямой
+        dist_to_start = sqrt(dx1 * dx1 + dy1 * dy1)
+        dist_to_end = sqrt(dx2 * dx2 + dy2 * dy2)
+        if dist_to_start < dist_to_end:
             return sx, sy, sfloor
         return ex, ey, efloor
 
-    # По умолчанию возвращаем ближайший конец
-    return (sx, sy, sfloor) if dist_to_start < dist_to_end else (ex, ey, efloor)
+    return phantom_x, phantom_y, phantom_floor
 
 def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
     type_, id_ = parse_vertex_id(vertex)
@@ -112,7 +107,7 @@ def get_relevant_floors(db: Session, start: str, end: str) -> set:
                 floor_ids.add(room.floor_id)
         elif type_ == "segment":
             segment = db.query(Segment).filter(Segment.id == id_).first()
-            if segment and floor_id:
+            if segment and segment.floor_id:
                 floor_ids.add(segment.floor_id)
     floor_ids.add(1)
     logger.info(f"Relevant floor IDs: {floor_ids}")
@@ -151,9 +146,9 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(start_vertex, (segment.start_x, segment.start_y, segment.floor_id))
         if end_vertex not in graph.vertices:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
-        weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.end_y) ** 2)
+        weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
-        graph.add_edge(end_vertex, start_vertex, weight)  # Двунаправленное ребро
+        graph.add_edge(end_vertex, start_vertex, weight)
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
     outdoor_segments = db.query(OutdoorSegment).all()
@@ -166,7 +161,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(end_vertex, (outdoor.end_x, outdoor.end_y, 1))
         weight = outdoor.weight if outdoor.weight else sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.end_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
-        graph.add_edge(end_vertex, start_vertex, weight)  # Двунаправленное ребро
+        graph.add_edge(end_vertex, start_vertex, weight)
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
     connections = db.query(Connection).all()
@@ -182,14 +177,14 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     room_coords = graph.vertices[room_vertex]
                     start_coords = graph.vertices[segment_start]
                     end_coords = graph.vertices[segment_end]
-                    # Пропускаем фантом, если предыдущая точка не задана (берём начало или конец)
-                    phantom_coords = find_phantom_point(room_coords, start_coords, end_coords)
+                    # Передаем None как prev_coords, так как выберем направление позже
+                    phantom_coords = find_phantom_point(room_coords, start_coords, end_coords, None)
                     phantom_vertex = f"phantom_room_{conn.room_id}_segment_{conn.segment_id}"
                     graph.add_vertex(phantom_vertex, phantom_coords)
                     dist_to_phantom = sqrt((room_coords[0] - phantom_coords[0]) ** 2 + (room_coords[1] - phantom_coords[1]) ** 2)
-                    graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom / 2)
-                    dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2) / 2
-                    dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2) / 2
+                    graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom)
+                    dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
+                    dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
                     graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
                     graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
                     logger.info(f"Added phantom vertex: {phantom_vertex} -> {phantom_coords}")

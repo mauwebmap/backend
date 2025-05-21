@@ -40,7 +40,7 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     prev_angle = ((prev_angle + 180) % 360) - 180
 
     angle_diff = ((curr_angle - prev_angle + 180) % 360) - 180
-    if abs(angle_diff) < 15:  # Уменьшаем порог для более точных поворотов
+    if abs(angle_diff) < 15:
         return "вперёд" if prev_direction in ["вперёд", None] else base_direction
     return "поверните налево" if -180 < angle_diff <= -15 else "поверните направо"
 
@@ -144,16 +144,9 @@ def simplify_route(points: list) -> list:
         next_point = points[i + 1]
         dx1, dy1 = curr_point["x"] - prev_point["x"], curr_point["y"] - prev_point["y"]
         dx2, dy2 = next_point["x"] - curr_point["x"], next_point["y"] - curr_point["y"]
-        dist1 = sqrt(dx1 ** 2 + dy1 ** 2)
-        dist2 = sqrt(dx2 ** 2 + dy2 ** 2)
-        total_dist = dist1 + dist2
-        direct_dist = sqrt((next_point["x"] - prev_point["x"]) ** 2 + (next_point["y"] - prev_point["y"]) ** 2)
         # Угол между векторами
         angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
-        if "phantom" in str(prev_point) or "phantom" in str(curr_point) or "phantom" in str(next_point):
-            simplified.append(curr_point)
-            continue
-        if total_dist - direct_dist < 10 and abs(angle) < 15:  # Более строгая фильтрация
+        if abs(angle) < 10:  # Если угол меньше 10 градусов, точка на прямой — пропускаем
             continue
         simplified.append(curr_point)
     simplified.append(points[-1])
