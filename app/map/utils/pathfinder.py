@@ -2,6 +2,9 @@ from heapq import heappush, heappop
 from math import sqrt
 from .graph import Graph
 from .builder import build_graph
+import logging  # Добавляем импорт logging
+
+logger = logging.getLogger(__name__)  # Создаем logger
 
 def heuristic(a: tuple, b: tuple) -> float:
     x1, y1, floor1 = a
