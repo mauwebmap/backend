@@ -7,7 +7,7 @@ from app.map.utils.builder import build_graph, Graph
 logger = logging.getLogger(__name__)
 
 def a_star(graph: Graph, start: str, goals: list) -> tuple:
-    """Находит кратчайший путь, используя A* + ALT"""
+    """Находит кратчайший путь, используя A* с фильтрацией циклов"""
     def heuristic(a, b):
         if graph.landmarks:
             return max(graph.landmark_heuristic(a, b) for _ in graph.landmarks)
@@ -29,6 +29,7 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
     g_score = {start: 0}
     f_score = {start: min(heuristic(start, goal) for goal in goals)}
     open_set_dict = {start: f_score[start]}
+    visited = set()  # Для отслеживания посещенных вершин
 
     while open_set:
         _, current = heapq.heappop(open_set)
@@ -44,12 +45,18 @@ def a_star(graph: Graph, start: str, goals: list) -> tuple:
             path.append(start)
             path.reverse()
             logger.info(f"[A*] Путь найден. Длина: {g_score[path[-1]]}. Вершин: {len(path)}")
+            logger.info(f"[A*] result: path={path}, weight={g_score[path[-1]]}")
             return path, g_score[path[-1]]
+
+        if current in visited:
+            continue  # Пропускаем уже посещенные вершины
+        visited.add(current)
 
         for neighbor, weight, _ in graph.edges.get(current, []):
             tentative_g_score = g_score[current] + weight
 
-            if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+            # Проверяем, улучшает ли путь переход к соседней вершине
+            if neighbor not in g_score or tentative_g_score < g_score.get(neighbor, float('inf')):
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
                 f_score[neighbor] = tentative_g_score + min(heuristic(neighbor, goal) for goal in goals)
