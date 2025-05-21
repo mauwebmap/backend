@@ -43,12 +43,14 @@ def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
     if type_ == "room":
         room = db.query(Room).filter(Room.id == id_).first()
         if not room:
+            logger.error(f"Комната {vertex} не найдена в базе")
             raise ValueError(f"Комната {vertex} не найдена")
         graph.add_vertex(vertex, (room.cab_x, room.cab_y, room.floor_id))
         logger.info(f"Added room vertex: {vertex} -> {(room.cab_x, room.cab_y, room.floor_id)}")
     elif type_ == "segment":
         segment = db.query(Segment).filter(Segment.id == id_).first()
         if not segment:
+            logger.error(f"Сегмент {vertex} не найден в базе")
             raise ValueError(f"Сегмент {vertex} не найден")
         graph.add_vertex(f"segment_{id_}_start", (segment.start_x, segment.start_y, segment.floor_id))
         graph.add_vertex(f"segment_{id_}_end", (segment.end_x, segment.end_y, segment.floor_id))
@@ -56,6 +58,7 @@ def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
     elif type_ == "outdoor":
         outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == id_).first()
         if not outdoor:
+            logger.error(f"Уличный сегмент {vertex} не найден в базе")
             raise ValueError(f"Уличный сегмент {vertex} не найден")
         graph.add_vertex(f"outdoor_{id_}_start", (outdoor.start_x, outdoor.start_y, 1))
         graph.add_vertex(f"outdoor_{id_}_end", (outdoor.end_x, outdoor.end_y, 1))
@@ -93,9 +96,14 @@ def get_relevant_floors(db: Session, start: str, end: str) -> set:
     return floor_ids
 
 def build_graph(db: Session, start: str, end: str) -> Graph:
+    logger.info(f"Starting to build graph for start={start}, end={end}")
     graph = Graph()
-    add_vertex_to_graph(graph, db, start)
-    add_vertex_to_graph(graph, db, end)
+    try:
+        add_vertex_to_graph(graph, db, start)
+        add_vertex_to_graph(graph, db, end)
+    except ValueError as e:
+        logger.error(f"Failed to add start/end vertices: {e}")
+        raise
 
     building_ids = get_relevant_buildings(db, start, end)
     floor_ids = get_relevant_floors(db, start, end)
@@ -167,7 +175,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 from_vertex = f"segment_{conn.from_segment_id}_end"
                 to_vertex = f"segment_{conn.to_segment_id}_start"
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                    if (from_vertex, to_vertex) not in graph.edges or (to_vertex, from_vertex) not in graph.edges:
+                    if (from_vertex, to_vertex) not in graph.edges:
                         graph.add_edge(from_vertex, to_vertex, weight)
                         graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
                         logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={weight}")
@@ -180,7 +188,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     from_vertex = f"segment_{conn.from_segment_id}_end"
                     to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                        if (from_vertex, to_vertex) not in graph.edges or (to_vertex, from_vertex) not in graph.edges:
+                        if (from_vertex, to_vertex) not in graph.edges:
                             graph.add_edge(from_vertex, to_vertex, weight)
                             graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
                             logger.info(f"Added edge (outdoor start): {from_vertex} <-> {to_vertex}, weight={weight}")
@@ -191,7 +199,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
                     to_vertex = f"segment_{conn.to_segment_id}_start"
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                        if (from_vertex, to_vertex) not in graph.edges or (to_vertex, from_vertex) not in graph.edges:
+                        if (from_vertex, to_vertex) not in graph.edges:
                             graph.add_edge(from_vertex, to_vertex, weight)
                             graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
                             logger.info(f"Added edge (outdoor end): {from_vertex} <-> {to_vertex}, weight={weight}")
@@ -203,11 +211,12 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
                 to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                    if (from_vertex, to_vertex) not in graph.edges or (to_vertex, from_vertex) not in graph.edges:
+                    if (from_vertex, to_vertex) not in graph.edges:
                         graph.add_edge(from_vertex, to_vertex, weight)
                         graph.add_edge(to_vertex, from_vertex, weight)  # Двунаправленное ребро
                         logger.info(f"Added edge (street): {from_vertex} <-> {to_vertex}, weight={weight}")
 
+    logger.info(f"Graph built successfully with {len(graph.vertices)} vertices")
     logger.info(f"Final vertices: {list(graph.vertices.keys())}")
     logger.info(f"Final edges: {dict(graph.edges)}")
     return graph
