@@ -174,10 +174,13 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     phantom_coords = find_phantom_point(room_coords, start_coords, end_coords, None)
                     phantom_vertex = f"phantom_room_{conn.room_id}_segment_{conn.segment_id}"
                     graph.add_vertex(phantom_vertex, phantom_coords)
-                    dist_to_phantom = sqrt((room_coords[0] - phantom_coords[0]) ** 2 + (room_coords[1] - phantom_coords[1]) ** 2)
+                    dist_to_phantom = sqrt(
+                        (room_coords[0] - phantom_coords[0]) ** 2 + (room_coords[1] - phantom_coords[1]) ** 2)
                     graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom)
-                    dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
-                    dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
+                    dist_phantom_to_start = sqrt(
+                        (phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
+                    dist_phantom_to_end = sqrt(
+                        (phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
                     graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
                     graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
                     logger.info(f"Added phantom vertex: {phantom_vertex} -> {phantom_coords}")
@@ -201,18 +204,18 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 from_vertex = f"segment_{conn.from_segment_id}_end"
                 to_vertex = f"segment_{conn.to_segment_id}_start"
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                    # Проверяем этажи
                     from_floor_id = from_segment.floor_id
                     to_floor_id = to_segment.floor_id
                     if (from_vertex, to_vertex) not in [(e[0], e[1]) for e in graph.edges.get(from_vertex, [])]:
-                        # Если этажи разные, добавляем штраф за переход
-                        if from_floor_id != to_floor_id:
-                            weight += 50  # Штраф за смену этажа
-                        graph.add_edge(from_vertex, to_vertex, weight)
-                        graph.add_edge(to_vertex, from_vertex, weight)
-                        logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={weight}, from_floor={from_floor_id}, to_floor={to_floor_id}")
+                        # Исправляем вес в зависимости от этажей
+                        additional_weight = 10 if from_floor_id != to_floor_id else 0
+                        graph.add_edge(from_vertex, to_vertex, weight + additional_weight)
+                        graph.add_edge(to_vertex, from_vertex, weight + additional_weight)
+                        logger.info(
+                            f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={weight + additional_weight}, from_floor={from_floor_id}, to_floor={to_floor_id}")
 
-        elif (conn.type in ["улица", "дверь"]) and ((conn.from_segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
+        elif (conn.type in ["улица", "дверь"]) and (
+                (conn.from_segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
             if conn.from_segment_id and conn.to_outdoor_id:
                 from_segment = next((s for s in segments if s.id == conn.from_segment_id), None)
                 to_outdoor = next((o for o in outdoor_segments if o.id == conn.to_outdoor_id), None)

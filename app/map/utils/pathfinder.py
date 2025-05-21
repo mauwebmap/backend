@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None) -> float:
     x1, y1, floor1 = current
     x2, y2, floor2 = goal
-    floor_cost = abs(floor1 - floor2) * 50
+    floor_cost = abs(floor1 - floor2) * 10  # Уменьшен штраф до 10
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
     deviation_cost = 0
@@ -45,6 +45,10 @@ def find_path(db, start: str, end: str, return_graph=False):
     processed_vertices = set()
 
     logger.info(f"Starting A* search with initial open_set: {open_set}")
+    start_floor = graph.vertices[start][2]
+    end_floor = graph.vertices[end][2]
+    must_change_floor = start_floor != end_floor
+
     while open_set:
         current_f, current = heappop(open_set)
         logger.debug(f"Processing vertex: {current}, f_score={current_f}")
@@ -94,9 +98,9 @@ def find_path(db, start: str, end: str, return_graph=False):
                         if dx1 != 0 or dy1 != 0:
                             angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
                             angle = abs(((angle + 180) % 360) - 180)
-                            if dist_to_goal_from_opp < dist_to_goal_from_curr and angle < 90 and dist_to_next_from_opp < 100:  # Ограничение на прыжки
+                            if dist_to_goal_from_opp < dist_to_goal_from_curr and angle < 90:
                                 final_path.append(opposite)
-                                i += 1  # Пропускаем добавление следующей точки, так как мы уже учли противоположную
+                                i += 1  # Пропускаем следующую точку
                 i += 1
 
             # Проверяем фантомные точки для сокращения пути
@@ -110,13 +114,8 @@ def find_path(db, start: str, end: str, return_graph=False):
                     next_vertex = final_path[i + 1]
                     next_coords = graph.vertices[next_vertex]
                     goal_coords = graph.vertices[end]
-
-                    # Проверяем, если фантомная точка ближе к следующей точке или цели
                     dist_to_next = sqrt((next_coords[0] - curr_coords[0]) ** 2 + (next_coords[1] - curr_coords[1]) ** 2)
-                    dist_to_goal_from_curr = sqrt((goal_coords[0] - curr_coords[0]) ** 2 + (goal_coords[1] - curr_coords[1]) ** 2)
-                    dist_to_goal_from_next = sqrt((goal_coords[0] - next_coords[0]) ** 2 + (goal_coords[1] - next_coords[1]) ** 2)
-
-                    if dist_to_next < 50 and dist_to_goal_from_curr < dist_to_goal_from_next:  # Если фантомная точка ближе
+                    if dist_to_next < 50:
                         i += 1  # Пропускаем длинный сегмент
                 i += 1
 
@@ -130,17 +129,14 @@ def find_path(db, start: str, end: str, return_graph=False):
         goal_coords = graph.vertices[end]
 
         for neighbor, weight, _ in graph.edges.get(current, []):
-            # Проверяем этажность при переходе
+            # Проверяем этажность
             curr_floor = curr_coords[2]
             neighbor_coords = graph.vertices[neighbor]
             neighbor_floor = neighbor_coords[2]
+            if must_change_floor and curr_floor == start_floor and neighbor_floor == start_floor:
+                continue  # Если нужно сменить этаж, пропускаем вершины на старом этаже после первой проверки
             if curr_floor != neighbor_floor:
-                weight += 50  # Дополнительный штраф за переход между этажами
-
-            # Избегаем длинных прыжков
-            dist_to_neighbor = sqrt((neighbor_coords[0] - curr_coords[0]) ** 2 + (neighbor_coords[1] - curr_coords[1]) ** 2)
-            if dist_to_neighbor > 100:  # Ограничение на длину прыжка
-                continue
+                weight += 10  # Штраф за переход между этажами
 
             tentative_g_score = g_score[current] + weight
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
