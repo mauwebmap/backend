@@ -201,10 +201,16 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 from_vertex = f"segment_{conn.from_segment_id}_end"
                 to_vertex = f"segment_{conn.to_segment_id}_start"
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
+                    # Проверяем этажи
+                    from_floor_id = from_segment.floor_id
+                    to_floor_id = to_segment.floor_id
                     if (from_vertex, to_vertex) not in [(e[0], e[1]) for e in graph.edges.get(from_vertex, [])]:
+                        # Если этажи разные, добавляем штраф за переход
+                        if from_floor_id != to_floor_id:
+                            weight += 50  # Штраф за смену этажа
                         graph.add_edge(from_vertex, to_vertex, weight)
                         graph.add_edge(to_vertex, from_vertex, weight)
-                        logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={weight}")
+                        logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={weight}, from_floor={from_floor_id}, to_floor={to_floor_id}")
 
         elif (conn.type in ["улица", "дверь"]) and ((conn.from_segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
             if conn.from_segment_id and conn.to_outdoor_id:
