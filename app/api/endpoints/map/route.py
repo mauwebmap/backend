@@ -60,7 +60,7 @@ def get_vertex_details(vertex: str, db: Session) -> tuple:
         return f"Фантомная точка у {room.name if room else 'комнаты'}", None
     return vertex, None
 
-def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
+def generate_text_instructions(path: list, graph: dict, db: Session, view_floor: int = None) -> list:
     instructions = []
     prev_prev_coords = None
     prev_coords = None
@@ -72,8 +72,12 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
     for i, vertex in enumerate(path):
         coords = graph.vertices[vertex]
         floor_id = coords[2]
-        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 0 else 0
+        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1  # Outdoor как 1-й этаж
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
+
+        # Пропускаем outdoor, если просматриваем не 1-й этаж
+        if view_floor is not None and floor_number != view_floor and vertex.startswith("outdoor_"):
+            continue
 
         vertex_name, vertex_number = get_vertex_details(vertex, db)
 
@@ -128,7 +132,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session) -> list:
     return instructions
 
 def simplify_route(points: list) -> list:
-    """Упрощает маршрут, удаляя избыточные точки с учетом расстояния."""
+    """Упрощает маршрут, удаляя избыточные точки с учетом фантомных точек."""
     if len(points) < 3:
         return points
     simplified = [points[0]]
@@ -142,19 +146,19 @@ def simplify_route(points: list) -> list:
         dist2 = sqrt(dx2 ** 2 + dy2 ** 2)
         total_dist = dist1 + dist2
         direct_dist = sqrt((next_point["x"] - prev_point["x"]) ** 2 + (next_point["y"] - prev_point["y"]) ** 2)
-        # Удаляем точку, если общий путь через нее не превышает прямой путь более чем на 10 единиц
-        if total_dist - direct_dist < 10:
+        # Сохраняем фантомные точки, если они есть
+        if "phantom" in str(prev_point) or "phantom" in str(curr_point) or "phantom" in str(next_point):
+            simplified.append(curr_point)
             continue
-        angle1 = atan2(dy1, dx1) if (dx1 != 0 or dy1 != 0) else 0
-        angle2 = atan2(dy2, dx2) if (dx2 != 0 or dy2 != 0) else 0
-        if abs(angle1 - angle2) < 0.2:
+        # Удаляем точку, если общий путь не превышает прямой более чем на 10 единиц
+        if total_dist - direct_dist < 10 and abs(dx1 * dy2 - dx2 * dy1) < 10:  # Проверяем угол
             continue
         simplified.append(curr_point)
     simplified.append(points[-1])
     return simplified
 
 @router.get("/route", response_model=dict)
-async def get_route(start: str, end: str, db: Session = Depends(get_db)):
+async def get_route(start: str, end: str, view_floor: int = None, db: Session = Depends(get_db)):
     logger.info(f"Received request to find route from {start} to {end}")
     path, weight, graph = find_path(db, start, end, return_graph=True)
     if not path:
@@ -162,7 +166,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Маршрут не найден")
 
     logger.info(f"Path: {path}, Weight: {weight}")
-    instructions = generate_text_instructions(path, graph, db)
+    instructions = generate_text_instructions(path, graph, db, view_floor)
 
     route = []
     current_floor_number = None
@@ -171,9 +175,12 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     for i, vertex in enumerate(path):
         coords = graph.vertices[vertex]
         floor_id = coords[2]
-        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 0 else 0
-        logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
+        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1
+        # Пропускаем outdoor, если просматриваем не 1-й этаж
+        if view_floor is not None and floor_number != view_floor and vertex.startswith("outdoor_"):
+            continue
 
+        logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
         point = {"x": coords[0], "y": coords[1]}
         if current_floor_number is None:
             current_floor_number = floor_number

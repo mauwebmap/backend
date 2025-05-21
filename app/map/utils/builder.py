@@ -57,9 +57,9 @@ def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
         outdoor = db.query(OutdoorSegment).filter(OutdoorSegment.id == id_).first()
         if not outdoor:
             raise ValueError(f"Уличный сегмент {vertex} не найден")
-        graph.add_vertex(f"outdoor_{id_}_start", (outdoor.start_x, outdoor.start_y, 0))
-        graph.add_vertex(f"outdoor_{id_}_end", (outdoor.end_x, outdoor.end_y, 0))
-        logger.info(f"Added outdoor segment vertices: outdoor_{id_}_start -> {(outdoor.start_x, outdoor.start_y, 0)}, outdoor_{id_}_end -> {(outdoor.end_x, outdoor.end_y, 0)}")
+        graph.add_vertex(f"outdoor_{id_}_start", (outdoor.start_x, outdoor.start_y, 1))  # Изменено на floor 1
+        graph.add_vertex(f"outdoor_{id_}_end", (outdoor.end_x, outdoor.end_y, 1))  # Изменено на floor 1
+        logger.info(f"Added outdoor segment vertices: outdoor_{id_}_start -> {(outdoor.start_x, outdoor.start_y, 1)}, outdoor_{id_}_end -> {(outdoor.end_x, outdoor.end_y, 1)}")
 
 def get_relevant_buildings(db: Session, start: str, end: str) -> set:
     building_ids = set()
@@ -88,7 +88,7 @@ def get_relevant_floors(db: Session, start: str, end: str) -> set:
             segment = db.query(Segment).filter(Segment.id == id_).first()
             if segment and segment.floor_id:
                 floor_ids.add(segment.floor_id)
-    floor_ids.add(0)  # Для outdoor и первого этажа
+    floor_ids.add(1)  # Для outdoor как первый этаж
     logger.info(f"Relevant floor IDs: {floor_ids}")
     return floor_ids
 
@@ -129,29 +129,12 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         start_vertex = f"outdoor_{outdoor.id}_start"
         end_vertex = f"outdoor_{outdoor.id}_end"
         if start_vertex not in graph.vertices:
-            graph.add_vertex(start_vertex, (outdoor.start_x, outdoor.start_y, 0))
+            graph.add_vertex(start_vertex, (outdoor.start_x, outdoor.start_y, 1))
         if end_vertex not in graph.vertices:
-            graph.add_vertex(end_vertex, (outdoor.end_x, outdoor.end_y, 0))
+            graph.add_vertex(end_vertex, (outdoor.end_x, outdoor.end_y, 1))
         weight = sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.end_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
         logger.info(f"Added edge: {start_vertex} -> {end_vertex}, weight={weight}")
-    if "outdoor_4_end" in graph.vertices and "outdoor_2_start" in graph.vertices:
-        graph.add_edge("outdoor_4_end", "outdoor_2_start", 10.0)
-        logger.info(f"Added temporary edge: outdoor_4_end -> outdoor_2_start, weight=10.0")
-
-    # Добавляем связи между outdoor_segment, если они пересекаются
-    for i, outdoor1 in enumerate(outdoor_segments):
-        for outdoor2 in outdoor_segments[i + 1:]:
-            o1_start = (outdoor1.start_x, outdoor1.start_y)
-            o1_end = (outdoor1.end_x, outdoor1.end_y)
-            o2_start = (outdoor2.start_x, outdoor2.start_y)
-            o2_end = (outdoor2.end_x, outdoor2.end_y)
-            if (o1_start == o2_end or o1_end == o2_start):
-                vertex1 = f"outdoor_{outdoor1.id}_start" if o1_start == o2_end else f"outdoor_{outdoor1.id}_end"
-                vertex2 = f"outdoor_{outdoor2.id}_end" if o1_start == o2_end else f"outdoor_{outdoor2.id}_start"
-                weight = 1  # Минимальный вес для соединения
-                graph.add_edge(vertex1, vertex2, weight)
-                logger.info(f"Added edge between outdoor segments: {vertex1} -> {vertex2}, weight={weight}")
 
     connections = db.query(Connection).all()
     for conn in connections:
@@ -170,9 +153,9 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     phantom_vertex = f"phantom_room_{conn.room_id}_segment_{conn.segment_id}"
                     graph.add_vertex(phantom_vertex, phantom_coords)
                     dist_to_phantom = sqrt((room_coords[0] - phantom_coords[0]) ** 2 + (room_coords[1] - phantom_coords[1]) ** 2)
-                    graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom)
-                    dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
-                    dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
+                    graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom / 2)  # Уменьшаем вес для оптимизации
+                    dist_phantom_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2) / 2
+                    dist_phantom_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2) / 2
                     graph.add_edge(phantom_vertex, segment_start, dist_phantom_to_start)
                     graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
                     logger.info(f"Added phantom vertex: {phantom_vertex} -> {phantom_coords}")
@@ -206,6 +189,16 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
                         graph.add_edge(from_vertex, to_vertex, weight)
                         logger.info(f"Added edge (outdoor end): {from_vertex} -> {to_vertex}, weight={weight}")
+
+    # Добавляем связи между outdoor_segment через здания
+    for outdoor1 in outdoor_segments:
+        for outdoor2 in outdoor_segments:
+            if outdoor1.id != outdoor2.id:
+                o1_end = (outdoor1.end_x, outdoor1.end_y)
+                o2_start = (outdoor2.start_x, outdoor2.start_y)
+                if sqrt((o1_end[0] - o2_start[0])**2 + (o1_end[1] - o2_start[1])**2) < 100:  # Порог расстояния
+                    graph.add_edge(f"outdoor_{outdoor1.id}_end", f"outdoor_{outdoor2.id}_start", 10.0)
+                    logger.info(f"Added edge between outdoor segments: outdoor_{outdoor1.id}_end -> outdoor_{outdoor2.id}_start, weight=10.0")
 
     logger.info(f"Final vertices: {list(graph.vertices.keys())}")
     logger.info(f"Final edges: {dict(graph.edges)}")
