@@ -1,8 +1,8 @@
 from sqlalchemy.orm import Session
 from app.map.models.room import Room
 from app.map.models.segment import Segment
-from app.map.models.connection import Connection
 from app.map.models.outdoor_segment import OutdoorSegment
+from app.map.models.connection import Connection
 from app.map.utils.graph import Graph
 from math import sqrt, atan2, degrees
 import logging
@@ -31,23 +31,17 @@ def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tu
     length = sqrt(length_squared)
     nx, ny = dx / length, dy / length
 
-    # Проекция комнаты на линию сегмента
     dot_product = (rx - sx) * nx + (ry - sy) * ny
     t = max(0, min(1, dot_product / length))
 
-    # Базовая фантомная точка
     phantom_x = sx + t * dx
     phantom_y = sy + t * dy
     phantom_floor = rfloor if abs(rfloor - sfloor) <= 1 else sfloor
 
-    # Если есть предыдущая точка, выбираем направление
     if prev_coords:
         px, py, _ = prev_coords
-        # Вектор от предыдущей точки к началу сегмента
         dx1, dy1 = sx - px, sy - py
-        # Вектор от предыдущей точки к концу сегмента
         dx2, dy2 = ex - px, ey - py
-        # Выбираем ближайшую точку на прямой
         dist_to_start = sqrt(dx1 * dx1 + dy1 * dy1)
         dist_to_end = sqrt(dx2 * dx2 + dy2 * dy2)
         if dist_to_start < dist_to_end:
@@ -177,7 +171,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     room_coords = graph.vertices[room_vertex]
                     start_coords = graph.vertices[segment_start]
                     end_coords = graph.vertices[segment_end]
-                    # Передаем None как prev_coords, так как выберем направление позже
                     phantom_coords = find_phantom_point(room_coords, start_coords, end_coords, None)
                     phantom_vertex = f"phantom_room_{conn.room_id}_segment_{conn.segment_id}"
                     graph.add_vertex(phantom_vertex, phantom_coords)
@@ -189,6 +182,18 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     graph.add_edge(phantom_vertex, segment_end, dist_phantom_to_end)
                     logger.info(f"Added phantom vertex: {phantom_vertex} -> {phantom_coords}")
 
+        elif conn.type == "дверь" and conn.from_segment_id and conn.to_segment_id:
+            from_segment = next((s for s in segments if s.id == conn.from_segment_id), None)
+            to_segment = next((s for s in segments if s.id == conn.to_segment_id), None)
+            if from_segment and to_segment:
+                from_vertex = f"segment_{conn.from_segment_id}_end"
+                to_vertex = f"segment_{conn.to_segment_id}_start"
+                if from_vertex in graph.vertices and to_vertex in graph.vertices:
+                    if (from_vertex, to_vertex) not in [(e[0], e[1]) for e in graph.edges.get(from_vertex, [])]:
+                        graph.add_edge(from_vertex, to_vertex, weight)
+                        graph.add_edge(to_vertex, from_vertex, weight)
+                        logger.info(f"Added edge (segment door): {from_vertex} <-> {to_vertex}, weight={weight}")
+
         elif conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
             from_segment = next((s for s in segments if s.id == conn.from_segment_id), None)
             to_segment = next((s for s in segments if s.id == conn.to_segment_id), None)
@@ -196,7 +201,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 from_vertex = f"segment_{conn.from_segment_id}_end"
                 to_vertex = f"segment_{conn.to_segment_id}_start"
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                    if (from_vertex, to_vertex) not in graph.edges:
+                    if (from_vertex, to_vertex) not in [(e[0], e[1]) for e in graph.edges.get(from_vertex, [])]:
                         graph.add_edge(from_vertex, to_vertex, weight)
                         graph.add_edge(to_vertex, from_vertex, weight)
                         logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={weight}")
@@ -209,7 +214,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     from_vertex = f"segment_{conn.from_segment_id}_end"
                     to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                        if (from_vertex, to_vertex) not in graph.edges:
+                        if (from_vertex, to_vertex) not in [(e[0], e[1]) for e in graph.edges.get(from_vertex, [])]:
                             graph.add_edge(from_vertex, to_vertex, weight)
                             graph.add_edge(to_vertex, from_vertex, weight)
                             logger.info(f"Added edge (outdoor start): {from_vertex} <-> {to_vertex}, weight={weight}")
@@ -220,7 +225,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
                     to_vertex = f"segment_{conn.to_segment_id}_start"
                     if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                        if (from_vertex, to_vertex) not in graph.edges:
+                        if (from_vertex, to_vertex) not in [(e[0], e[1]) for e in graph.edges.get(from_vertex, [])]:
                             graph.add_edge(from_vertex, to_vertex, weight)
                             graph.add_edge(to_vertex, from_vertex, weight)
                             logger.info(f"Added edge (outdoor end): {from_vertex} <-> {to_vertex}, weight={weight}")
@@ -232,7 +237,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
                 to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                    if (from_vertex, to_vertex) not in graph.edges:
+                    if (from_vertex, to_vertex) not in [(e[0], e[1]) for e in graph.edges.get(from_vertex, [])]:
                         graph.add_edge(from_vertex, to_vertex, weight)
                         graph.add_edge(to_vertex, from_vertex, weight)
                         logger.info(f"Added edge (street): {from_vertex} <-> {to_vertex}, weight={weight}")

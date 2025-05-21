@@ -9,10 +9,9 @@ logger = logging.getLogger(__name__)
 def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None) -> float:
     x1, y1, floor1 = current
     x2, y2, floor2 = goal
-    floor_cost = abs(floor1 - floor2) * 100
+    floor_cost = abs(floor1 - floor2) * 50  # Уменьшенный штраф за этаж
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
-    # Штраф за отклонение от прямой линии
     deviation_cost = 0
     if prev and graph:
         px, py, _ = prev
@@ -22,7 +21,7 @@ def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = Non
             angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
             angle = abs(((angle + 180) % 360) - 180)
             if angle < 70 or angle > 110:
-                deviation_cost = (abs(angle - 90)) * 10
+                deviation_cost = (abs(angle - 90)) * 1  # Минимальный штраф
 
     return distance + floor_cost + deviation_cost
 
@@ -62,7 +61,7 @@ def find_path(db, start: str, end: str, return_graph=False):
             path.append(start)
             path.reverse()
 
-            # Принудительное добавление противоположных точек для сегментов/аутдоров
+            # Упрощенное добавление противоположных точек
             final_path = []
             for i, vertex in enumerate(path):
                 final_path.append(vertex)
@@ -73,14 +72,11 @@ def find_path(db, start: str, end: str, return_graph=False):
                         opposite = vertex.replace("_end", "_start")
                     else:
                         continue
-                    if opposite in graph.vertices and path[i + 1] != opposite:
-                        # Проверяем расстояние до следующей точки
+                    if opposite in graph.vertices and opposite not in final_path:
+                        # Проверяем, что добавление противоположной точки не нарушает путь
                         next_vertex = path[i + 1]
-                        dist_to_opposite = sqrt((graph.vertices[vertex][0] - graph.vertices[opposite][0]) ** 2 +
-                                                (graph.vertices[vertex][1] - graph.vertices[opposite][1]) ** 2)
-                        dist_to_next = sqrt((graph.vertices[vertex][0] - graph.vertices[next_vertex][0]) ** 2 +
-                                            (graph.vertices[vertex][1] - graph.vertices[next_vertex][1]) ** 2)
-                        if dist_to_opposite < dist_to_next:
+                        if (opposite, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(opposite, [])] or \
+                           (next_vertex, opposite) in [(e[0], e[1]) for e in graph.edges.get(next_vertex, [])]:
                             final_path.append(opposite)
 
             weight = g_score[end]
