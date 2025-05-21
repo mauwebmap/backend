@@ -19,7 +19,7 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     curr_dx = curr_coords[0] - prev_coords[0]
     curr_dy = curr_coords[1] - prev_coords[1]
     distance = sqrt(curr_dx ** 2 + curr_dy ** 2)
-    if distance < 10:  # Игнорируем мелкие движения
+    if distance < 15:  # Увеличен порог для мелких движений
         return "вперёд" if prev_direction in ["вперёд", None] else prev_direction
 
     curr_angle = degrees(atan2(curr_dy, curr_dx))
@@ -40,9 +40,9 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
     prev_angle = ((prev_angle + 180) % 360) - 180
 
     angle_diff = ((curr_angle - prev_angle + 180) % 360) - 180
-    if abs(angle_diff) < 30:
+    if abs(angle_diff) < 45:  # Увеличен порог для игнорирования мелких поворотов
         return "вперёд" if prev_direction in ["вперёд", None] else base_direction
-    return "поверните налево" if -180 < angle_diff <= -30 else "поверните направо"
+    return "поверните налево" if -180 < angle_diff <= -45 else "поверните направо"
 
 def get_vertex_details(vertex: str, db: Session) -> tuple:
     vertex_type, vertex_id = vertex.split("_", 1)
@@ -72,10 +72,9 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
     for i, vertex in enumerate(path):
         coords = graph.vertices[vertex]
         floor_id = coords[2]
-        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1  # Outdoor как 1-й этаж
+        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
 
-        # Пропускаем outdoor, если просматриваем не 1-й этаж
         if view_floor is not None and floor_number != view_floor and vertex.startswith("outdoor_"):
             continue
 
@@ -102,6 +101,10 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
                 ).first()
                 if connection:
                     instructions.append(f"Дойдите до лестницы и {'поднимитесь' if prev_floor < floor_number else 'спуститесь'} на {floor_number}-й этаж")
+            elif prev_floor != 1 and floor_number == 1:
+                instructions.append("Выйдите из здания на улицу")
+            elif prev_floor == 1 and floor_number != 1:
+                instructions.append(f"Войдите в здание и поднимитесь на {floor_number}-й этаж")
             prev_prev_coords = None
             last_turn = None
 
@@ -132,7 +135,6 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
     return instructions
 
 def simplify_route(points: list) -> list:
-    """Упрощает маршрут, удаляя избыточные точки с учетом фантомных точек."""
     if len(points) < 3:
         return points
     simplified = [points[0]]
@@ -146,12 +148,10 @@ def simplify_route(points: list) -> list:
         dist2 = sqrt(dx2 ** 2 + dy2 ** 2)
         total_dist = dist1 + dist2
         direct_dist = sqrt((next_point["x"] - prev_point["x"]) ** 2 + (next_point["y"] - prev_point["y"]) ** 2)
-        # Сохраняем фантомные точки, если они есть
         if "phantom" in str(prev_point) or "phantom" in str(curr_point) or "phantom" in str(next_point):
             simplified.append(curr_point)
             continue
-        # Удаляем точку, если общий путь не превышает прямой более чем на 10 единиц
-        if total_dist - direct_dist < 10 and abs(dx1 * dy2 - dx2 * dy1) < 10:  # Проверяем угол
+        if total_dist - direct_dist < 15 and abs(dx1 * dy2 - dx2 * dy1) < 15:
             continue
         simplified.append(curr_point)
     simplified.append(points[-1])
@@ -176,7 +176,6 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
         coords = graph.vertices[vertex]
         floor_id = coords[2]
         floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id != 1 else 1
-        # Пропускаем outdoor, если просматриваем не 1-й этаж
         if view_floor is not None and floor_number != view_floor and vertex.startswith("outdoor_"):
             continue
 
