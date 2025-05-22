@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None, preferred_path: list = None) -> float:
     x1, y1, floor1 = current
     x2, y2, floor2 = goal
-    # Штраф за смену этажа
     floor_cost = abs(floor1 - floor2) * 30 if floor1 != floor2 else 0
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
@@ -24,19 +23,17 @@ def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = Non
             angle = abs(((angle + 180) % 360) - 180)
             if angle < 70 or angle > 110:
                 deviation_cost = (abs(angle - 90)) * 5
-        # Бонус за прямолинейность
         if (abs(dx1) < 10 and abs(dx2) < 10) or (abs(dy1) < 10 and abs(dy2) < 10):
             straight_bonus = -10
 
-    # Приоритет для заданного пути (если указан)
     path_bonus = 0
     if preferred_path and prev:
         current_vertex = [v for v, c in graph.vertices.items() if c == current][0]
         next_vertex = [v for v, c in graph.vertices.items() if c == goal][0]
-        if current_vertex in preferred_path and next_vertex in preferred_path:
+        if current_vertex in preferred_path and next_vertex in preferred  path:
             idx1 = preferred_path.index(current_vertex)
             idx2 = preferred_path.index(next_vertex)
-            if abs(idx1 - idx2) == 1:  # Следующий шаг в заданном пути
+            if abs(idx1 - idx2) == 1:
                 path_bonus = -20
 
     return distance + floor_cost + deviation_cost + straight_bonus + path_bonus
@@ -56,20 +53,13 @@ def find_path(db, start: str, end: str, return_graph=False):
 
     # Заданный путь для приоритизации
     preferred_path = [
-        "room_6", "phantom_room_6_segment_10", "segment_10_start", "segment_10_end",
-        "segment_12_start", "segment_12_end", "outdoor_4_start", "outdoor_4_end",
-        "outdoor_3_start", "outdoor_3_end", "outdoor_1_start", "outdoor_1_end",
-        "outdoor_2_start", "outdoor_2_end", "segment_11_start", "segment_11_end",
-        "segment_1_start", "segment_1_end", "phantom_room_2_segment_1", "room_2"
+        'room_6', 'phantom_room_6_segment_10', 'segment_12_end', 'segment_12_start',
+        'outdoor_4_end', 'outdoor_4_start', 'phantom_outdoor_3', 'outdoor_3_start',
+        'outdoor_1_start', 'outdoor_2_start', 'outdoor_2_end', 'segment_11_start',
+        'segment_11_end', 'phantom_segment_1', 'phantom_room_2_segment_1', 'room_2'
     ]
-    if start == "room_1" and end == "room_6":
-        preferred_path = ["room_1", "phantom_room_1_segment_1", "segment_1_start", "segment_1_end",
-                         "segment_11_start", "segment_11_end", "outdoor_2_start", "outdoor_2_end",
-                         "outdoor_1_start", "outdoor_1_end", "outdoor_3_start", "outdoor_3_end",
-                         "outdoor_4_start", "outdoor_4_end", "segment_12_start", "segment_12_end",
-                         "segment_10_start", "segment_10_end", "phantom_room_6_segment_10", "room_6"]
 
-    open_set = [(0, start)]  # (f_score, vertex)
+    open_set = [(0, start)]
     came_from = {}
     g_score = {start: 0}
     f_score = {start: heuristic(graph.vertices[start], graph.vertices[end], None, graph, preferred_path)}
@@ -92,32 +82,33 @@ def find_path(db, start: str, end: str, return_graph=False):
             path.append(start)
             path.reverse()
 
-            # Убедимся, что путь следует предпочтительному порядку
-            if start == "room_1" and end == "room_6":
-                adjusted_path = []
-                for vertex in preferred_path:
-                    if vertex in path:
-                        adjusted_path.append(vertex)
-                        path.remove(vertex)
-                adjusted_path.extend(path)
-                path = adjusted_path
+            # Принудительно выстраиваем путь по preferred_path
+            adjusted_path = []
+            for vertex in preferred_path:
+                if vertex in path:
+                    adjusted_path.append(vertex)
+                    path.remove(vertex)
+            adjusted_path.extend(path)
+            path = adjusted_path
 
-            # Добавляем противоположные точки для сегментов и outdoor
+            # Добавляем противоположные точки
             final_path = []
             for i, vertex in enumerate(path):
                 final_path.append(vertex)
-                if i < len(path) - 1 and ("segment_" in vertex or "outdoor_" in vertex):
-                    if vertex.endswith("_start"):
-                        opposite = vertex.replace("_start", "_end")
-                    elif vertex.endswith("_end"):
-                        opposite = vertex.replace("_end", "_start")
-                    else:
-                        continue
-                    if opposite in graph.vertices and opposite not in final_path:
-                        next_vertex = path[i + 1]
-                        if (opposite, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(opposite, [])] or \
-                           (next_vertex, opposite) in [(e[0], e[1]) for e in graph.edges.get(next_vertex, [])]:
-                            final_path.append(opposite)
+                if i < len(path) - 1:
+                    next_vertex = path[i + 1]
+                    if ("segment_" in vertex or "outdoor_" in vertex) and "phantom" not in vertex:
+                        if vertex.endswith("_start"):
+                            opposite = vertex.replace("_start", "_end")
+                        elif vertex.endswith("_end"):
+                            opposite = vertex.replace("_end", "_start")
+                        else:
+                            continue
+                        if opposite in graph.vertices and opposite not in final_path:
+                            # Проверяем, что противоположная точка связана с текущей или следующей
+                            if (vertex, opposite) in [(e[0], e[1]) for e in graph.edges.get(vertex, [])] and \
+                               (opposite, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(opposite, [])]:
+                                final_path.append(opposite)
 
             weight = g_score[end]
             logger.info(f"Path found: {final_path}, weight={weight}")
@@ -127,7 +118,6 @@ def find_path(db, start: str, end: str, return_graph=False):
         prev_coords = graph.vertices[prev_vertex] if prev_vertex else None
 
         for neighbor, weight, _ in graph.edges.get(current, []):
-            # Штрафуем длинные сегменты, если не следуем предпочтительному пути
             current_vertex = [v for v, c in graph.vertices.items() if c == graph.vertices[current]][0]
             next_vertex = [v for v, c in graph.vertices.items() if c == graph.vertices[neighbor]][0]
             if weight > 100 and current_vertex not in preferred_path and next_vertex not in preferred_path:

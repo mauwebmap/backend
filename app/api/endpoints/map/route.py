@@ -72,7 +72,17 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
     for i, vertex in enumerate(path):
         coords = graph.vertices[vertex]
         floor_id = coords[2]
-        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id else 1
+        try:
+            floor = db.query(Floor).filter(Floor.id == floor_id).first()
+            if floor:
+                floor_number = floor.floor_number if floor_id != 1 else 1
+            else:
+                logger.warning(f"Floor with id {floor_id} not found, defaulting to 1")
+                floor_number = 1
+        except Exception as e:
+            logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
+            floor_number = 1
+
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
 
         if view_floor is not None and floor_number != view_floor and vertex.startswith("outdoor_"):
@@ -109,24 +119,21 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
             last_turn = None
 
         if prev_coords:
-            direction = get_direction(prev_prev_coords, prev_coords, (coords[0], coords[1]), last_turn, i)
-            logger.info(f"Direction for {vertex}: {direction}")
-            if direction.startswith("поверните"):
-                if last_turn and "поверните" in last_turn.lower():
-                    current_instruction[-1] = direction
-                else:
+            try:
+                direction = get_direction(prev_prev_coords, prev_coords, (coords[0], coords[1]), last_turn, i)
+                logger.info(f"Direction for {vertex}: {direction}")
+                if direction.startswith("поверните"):
+                    if last_turn and "поверните" in last_turn.lower():
+                        current_instruction[-1] = direction
+                    else:
+                        current_instruction.append(direction)
+                    last_turn = direction
+                elif direction != "вперёд" and not last_turn:
                     current_instruction.append(direction)
-                last_turn = direction
-            elif direction != "вперёд" and not last_turn:
+            except Exception as e:
+                logger.error(f"Error calculating direction for vertex {vertex}: {e}")
+                direction = "вперёд"
                 current_instruction.append(direction)
-            if "outdoor_" in vertex:
-                outdoor_name, _ = get_vertex_details(vertex, db)
-                if not last_turn or "поверните" not in last_turn.lower():
-                    current_instruction.append(f"пройдите через {outdoor_name}")
-                else:
-                    instructions.append(f"{current_instruction[0]} {last_turn}")
-                    current_instruction = [f"пройдите через {outdoor_name}"]
-                    last_turn = None
 
         if i == len(path) - 1:
             destination = f"{vertex_name} номер {vertex_number}" if vertex_number else vertex_name
@@ -140,6 +147,7 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
         prev_floor = floor_number
         prev_vertex = vertex
 
+    logger.info(f"Generated instructions: {instructions}")
     return instructions
 
 def simplify_route(points: list) -> list:
@@ -153,7 +161,6 @@ def simplify_route(points: list) -> list:
         dx1, dy1 = curr_point["x"] - prev_point["x"], curr_point["y"] - prev_point["y"]
         dx2, dy2 = next_point["x"] - curr_point["x"], next_point["y"] - curr_point["y"]
 
-        # Сохраняем все phantom точки
         if "phantom" in curr_point.get("vertex", ""):
             simplified.append(curr_point)
             continue
@@ -164,7 +171,6 @@ def simplify_route(points: list) -> list:
 
         angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
         angle = abs(((angle + 180) % 360) - 180)
-        # Сохраняем точки с более мягким порогом (30°–150°)
         if 30 <= angle <= 150:
             simplified.append(curr_point)
 
@@ -186,7 +192,11 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
         raise HTTPException(status_code=404, detail="Маршрут не найден")
 
     logger.info(f"Path: {path}, Weight: {weight}")
-    instructions = generate_text_instructions(path, graph, db, view_floor)
+    try:
+        instructions = generate_text_instructions(path, graph, db, view_floor)
+    except Exception as e:
+        logger.error(f"Error generating instructions: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при генерации инструкций: {e}")
 
     route = []
     current_floor_number = None
@@ -195,7 +205,17 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
     for i, vertex in enumerate(path):
         coords = graph.vertices[vertex]
         floor_id = coords[2]
-        floor_number = db.query(Floor).filter(Floor.id == floor_id).first().floor_number if floor_id else 1
+        try:
+            floor = db.query(Floor).filter(Floor.id == floor_id).first()
+            if floor:
+                floor_number = floor.floor_number if floor_id != 1 else 1
+            else:
+                logger.warning(f"Floor with id {floor_id} not found, defaulting to 1")
+                floor_number = 1
+        except Exception as e:
+            logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
+            floor_number = 1
+
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
         point = {"x": coords[0], "y": coords[1], "vertex": vertex}
         if current_floor_number is None:
@@ -203,16 +223,14 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
             floor_points.append(point)
         elif floor_number != current_floor_number:
             if floor_points:
-                simplified_points = simplify_route(floor_points)
-                route.append({"floor": current_floor_number, "points": simplified_points})
+                route.append({"floor": current_floor_number, "points": simplify_route(floor_points)})
             floor_points = [point]
             current_floor_number = floor_number
         else:
             floor_points.append(point)
 
     if floor_points:
-        simplified_points = simplify_route(floor_points)
-        route.append({"floor": current_floor_number, "points": simplified_points})
+        route.append({"floor": current_floor_number, "points": simplify_route(floor_points)})
 
     logger.info(f"Generated route: {route}")
     return {"path": route, "weight": weight, "instructions": instructions}

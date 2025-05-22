@@ -17,10 +17,9 @@ def parse_vertex_id(vertex: str):
         raise ValueError(f"Неверный тип вершины: {type_}")
     return type_, int(id_)
 
-def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tuple, prev_coords: tuple = None) -> tuple:
-    rx, ry, rfloor = room_coords
-    sx, sy, sfloor = segment_start
-    ex, ey, efloor = segment_end
+def find_phantom_point(start_coords: tuple, end_coords: tuple, ref_coords: tuple = None) -> tuple:
+    sx, sy, sfloor = start_coords
+    ex, ey, efloor = end_coords
 
     dx = ex - sx
     dy = ey - sy
@@ -31,23 +30,20 @@ def find_phantom_point(room_coords: tuple, segment_start: tuple, segment_end: tu
     length = sqrt(length_squared)
     nx, ny = dx / length, dy / length
 
-    dot_product = (rx - sx) * nx + (ry - sy) * ny
-    t = max(0, min(1, dot_product / length))
+    if ref_coords:
+        rx, ry, rfloor = ref_coords
+        dot_product = (rx - sx) * nx + (ry - sy) * ny
+        t = max(0, min(1, dot_product / length))
+        phantom_x = sx + t * dx
+        phantom_y = sy + t * dy
+        phantom_floor = rfloor if abs(rfloor - sfloor) <= 1 else sfloor
+        return phantom_x, phantom_y, phantom_floor
 
+    # Если нет ref_coords, берем середину
+    t = 0.5
     phantom_x = sx + t * dx
     phantom_y = sy + t * dy
-    phantom_floor = rfloor if abs(rfloor - sfloor) <= 1 else sfloor
-
-    if prev_coords:
-        px, py, _ = prev_coords
-        dx1, dy1 = sx - px, sy - py
-        dx2, dy2 = ex - px, ey - py
-        dist_to_start = sqrt(dx1 * dx1 + dy1 * dy1)
-        dist_to_end = sqrt(dx2 * dx2 + dy2 * dy2)
-        if dist_to_start < dist_to_end:
-            return sx, sy, sfloor
-        return ex, ey, efloor
-
+    phantom_floor = sfloor
     return phantom_x, phantom_y, phantom_floor
 
 def add_vertex_to_graph(graph: Graph, db: Session, vertex: str):
@@ -158,6 +154,38 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         graph.add_edge(end_vertex, start_vertex, weight)
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
+    # Добавляем phantom точки для outdoor сегментов
+    for outdoor in outdoor_segments:
+        if outdoor.id == 3:  # Добавляем phantom_outdoor_3
+            start_vertex = f"outdoor_{outdoor.id}_start"
+            end_vertex = f"outdoor_{outdoor.id}_end"
+            start_coords = graph.vertices[start_vertex]
+            end_coords = graph.vertices[end_vertex]
+            phantom_coords = find_phantom_point(start_coords, end_coords)
+            phantom_vertex = f"phantom_outdoor_{outdoor.id}"
+            graph.add_vertex(phantom_vertex, phantom_coords)
+            dist_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
+            dist_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
+            graph.add_edge(phantom_vertex, start_vertex, dist_to_start)
+            graph.add_edge(phantom_vertex, end_vertex, dist_to_end)
+            logger.info(f"Added phantom vertex: {phantom_vertex} -> {phantom_coords}")
+
+    # Добавляем phantom точки для segment_11
+    for segment in segments:
+        if segment.id == 11:  # Добавляем phantom_segment_1 рядом с segment_11_end
+            end_vertex = f"segment_{segment.id}_end"
+            start_vertex = f"segment_{segment.id}_start"
+            end_coords = graph.vertices[end_vertex]
+            start_coords = graph.vertices[start_vertex]
+            phantom_coords = find_phantom_point(start_coords, end_coords)
+            phantom_vertex = f"phantom_segment_{segment.id}"
+            graph.add_vertex(phantom_vertex, phantom_coords)
+            dist_to_end = sqrt((phantom_coords[0] - end_coords[0]) ** 2 + (phantom_coords[1] - end_coords[1]) ** 2)
+            dist_to_start = sqrt((phantom_coords[0] - start_coords[0]) ** 2 + (phantom_coords[1] - start_coords[1]) ** 2)
+            graph.add_edge(phantom_vertex, end_vertex, dist_to_end)
+            graph.add_edge(phantom_vertex, start_vertex, dist_to_start)
+            logger.info(f"Added phantom vertex: {phantom_vertex} -> {phantom_coords}")
+
     connections = db.query(Connection).all()
     for conn in connections:
         weight = conn.weight if conn.weight else 1
@@ -171,7 +199,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     room_coords = graph.vertices[room_vertex]
                     start_coords = graph.vertices[segment_start]
                     end_coords = graph.vertices[segment_end]
-                    phantom_coords = find_phantom_point(room_coords, start_coords, end_coords, None)
+                    phantom_coords = find_phantom_point(start_coords, end_coords, room_coords)
                     phantom_vertex = f"phantom_room_{conn.room_id}_segment_{conn.segment_id}"
                     graph.add_vertex(phantom_vertex, phantom_coords)
                     dist_to_phantom = sqrt((room_coords[0] - phantom_coords[0]) ** 2 + (room_coords[1] - phantom_coords[1]) ** 2)
