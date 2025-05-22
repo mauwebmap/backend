@@ -60,7 +60,7 @@ def get_vertex_details(vertex: str, db: Session) -> tuple:
         return f"Фантомная точка у {room.name if room else 'комнаты'}", None
     return vertex, None
 
-def generate_text_instructions(path: list, graph: dict, db: Session, view_floor: int = None) -> list:
+def generate_text_instructions(path: list, graph: Graph, db: Session, view_floor: int = None) -> list:
     instructions = []
     prev_prev_coords = None
     prev_coords = None
@@ -70,7 +70,8 @@ def generate_text_instructions(path: list, graph: dict, db: Session, view_floor:
     last_turn = None
 
     for i, vertex in enumerate(path):
-        coords = graph.vertices[vertex]
+        vertex_data = graph.get_vertex_data(vertex)  # Используем новый метод для получения данных
+        coords = vertex_data["coords"]
         floor_id = coords[2]
         try:
             floor = db.query(Floor).filter(Floor.id == floor_id).first()
@@ -203,7 +204,8 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
     floor_points = []
 
     for i, vertex in enumerate(path):
-        coords = graph.vertices[vertex]
+        vertex_data = graph.get_vertex_data(vertex)  # Используем новый метод
+        coords = vertex_data["coords"]
         floor_id = coords[2]
         try:
             floor = db.query(Floor).filter(Floor.id == floor_id).first()

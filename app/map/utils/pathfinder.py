@@ -88,6 +88,7 @@ def find_path(db, start: str, end: str, return_graph=False):
             if start_building == end_building and start_building is not None:
                 route = [segment for segment in route if not any("outdoor" in p["vertex"] for p in segment["points"])]
 
+            logger.info(f"Generated route structure: {route}")  # Добавляем отладочный лог
             logger.info(f"Pathfinding completed: path={path}, weight={weight}")
             return path, weight, graph if return_graph else route
 
