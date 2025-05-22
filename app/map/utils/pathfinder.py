@@ -7,40 +7,44 @@ import logging
 logger = logging.getLogger(__name__)
 
 def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None) -> float:
-    x1, y1, floor1 = current
-    x2, y2, floor2 = goal
-    # Штраф за смену этажа
-    floor_cost = abs(floor1 - floor2) * 30 if floor1 != floor2 else 0
-    distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+    try:
+        x1, y1, floor1 = current
+        x2, y2, floor2 = goal
+        # Штраф за смену этажа
+        floor_cost = abs(floor1 - floor2) * 30 if floor1 != floor2 else 0
+        distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
-    deviation_cost = 0
-    straight_bonus = 0
-    if prev and graph:
-        px, py, _ = prev
-        dx1, dy1 = x1 - px, y1 - py
-        dx2, dy2 = x2 - x1, y2 - y1
-        if dx1 != 0 or dy1 != 0:
-            angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
-            angle = abs(((angle + 180) % 360) - 180)
-            if angle < 70 or angle > 110:
-                deviation_cost = (abs(angle - 90)) * 5
-        if (abs(dx1) < 10 and abs(dx2) < 10) or (abs(dy1) < 10 and abs(dy2) < 10):
-            straight_bonus = -10
+        deviation_cost = 0
+        straight_bonus = 0
+        if prev and graph:
+            px, py, _ = prev
+            dx1, dy1 = x1 - px, y1 - py
+            dx2, dy2 = x2 - x1, y2 - y1
+            if dx1 != 0 or dy1 != 0:
+                angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
+                angle = abs(((angle + 180) % 360) - 180)
+                if angle < 70 or angle > 110:
+                    deviation_cost = (abs(angle - 90)) * 5
+            if (abs(dx1) < 10 and abs(dx2) < 10) or (abs(dy1) < 10 and abs(dy2) < 10):
+                straight_bonus = -10
 
-    # Бонус за _end точки
-    current_vertex = [v for v, c in graph.vertices.items() if c == current][0]
-    if "_end" in current_vertex and current_vertex.split("_")[0] in ["segment", "outdoor"]:
-        distance *= 0.9  # Уменьшаем вес для _end точек
+        # Бонус за _end точки
+        current_vertex = [v for v, c in graph.vertices.items() if c == current][0] if graph else "unknown"
+        if "_end" in current_vertex and current_vertex.split("_")[0] in ["segment", "outdoor"]:
+            distance *= 0.9  # Уменьшаем вес для _end точек
 
-    # Бонус за phantom точки
-    if "phantom_" in current_vertex:
-        distance *= 0.8  # Уменьшаем вес для phantom точек
+        # Бонус за phantom точки
+        if "phantom_" in current_vertex:
+            distance *= 0.8  # Уменьшаем вес для phantom точек
 
-    # Дополнительный приоритет для _start точек при выходе на улицу
-    if "_start" in current_vertex and prev and graph.vertices[prev][2] != 1 and floor1 == 1:
-        distance *= 0.7  # Уменьшаем вес для _start точек при выходе из здания
+        # Дополнительный приоритет для _start точек при выходе на улицу
+        if "_start" in current_vertex and prev and graph.vertices.get(prev) and graph.vertices[prev][2] != 1 and floor1 == 1:
+            distance *= 0.7  # Уменьшаем вес для _start точек при выходе из здания
 
-    return distance + floor_cost + deviation_cost + straight_bonus
+        return distance + floor_cost + deviation_cost + straight_bonus
+    except Exception as e:
+        logger.error(f"Error in heuristic for current={current}, goal={goal}, prev={prev}: {e}")
+        return float('inf')
 
 def find_path(db, start: str, end: str, return_graph=False):
     logger.info(f"Starting pathfinding from {start} to {end}")
@@ -86,8 +90,8 @@ def find_path(db, start: str, end: str, return_graph=False):
                 final_path.append(vertex)
                 if i < len(path) - 1:
                     next_vertex = path[i + 1]
-                    current_coords = graph.vertices[vertex]
-                    next_coords = graph.vertices[next_vertex]
+                    current_coords = graph.vertices.get(vertex, (0, 0, 0))
+                    next_coords = graph.vertices.get(next_vertex, (0, 0, 0))
                     # Добавляем противоположные точки для segment и outdoor
                     if ("segment_" in vertex or "outdoor_" in vertex) and "phantom" not in vertex:
                         if vertex.endswith("_start"):
@@ -120,22 +124,26 @@ def find_path(db, start: str, end: str, return_graph=False):
             return final_path, weight, graph if return_graph else final_path
 
         prev_vertex = came_from.get(current, None)
-        prev_coords = graph.vertices[prev_vertex] if prev_vertex else None
+        prev_coords = graph.vertices.get(prev_vertex) if prev_vertex else None
 
-        for neighbor, weight, _ in graph.edges.get(current, []):
-            # Штрафуем длинные сегменты
-            if weight > 100:
-                weight *= 1.5
+        try:
+            for neighbor, weight, _ in graph.edges.get(current, []):
+                # Штрафуем длинные сегменты
+                if weight > 100:
+                    weight *= 1.5
 
-            tentative_g_score = g_score[current] + weight
-            if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-                came_from[neighbor] = current
-                g_score[neighbor] = tentative_g_score
-                f_score[neighbor] = tentative_g_score + heuristic(
-                    graph.vertices[neighbor], graph.vertices[end], graph.vertices[current], graph
-                )
-                heappush(open_set, (f_score[neighbor], neighbor))
-                logger.debug(f"Added to open_set: {neighbor}, f_score={f_score[neighbor]}")
+                tentative_g_score = g_score[current] + weight
+                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = tentative_g_score + heuristic(
+                        graph.vertices[neighbor], graph.vertices[end], graph.vertices.get(current), graph
+                    )
+                    heappush(open_set, (f_score[neighbor], neighbor))
+                    logger.debug(f"Added to open_set: {neighbor}, f_score={f_score[neighbor]}")
+        except Exception as e:
+            logger.error(f"Error processing neighbor for vertex {current}: {e}")
+            continue
 
     logger.warning(f"No path found from {start} to {end}")
     return [], float('inf'), graph if return_graph else []
