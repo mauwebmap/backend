@@ -3,6 +3,7 @@ from math import sqrt
 from .graph import Graph
 from .builder import build_graph
 import logging
+from app.map.models.connection import Connection
 
 logger = logging.getLogger(__name__)
 
