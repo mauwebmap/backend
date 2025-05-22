@@ -152,16 +152,22 @@ def simplify_route(points: list) -> list:
         next_point = points[i + 1]
         dx1, dy1 = curr_point["x"] - prev_point["x"], curr_point["y"] - prev_point["y"]
         dx2, dy2 = next_point["x"] - curr_point["x"], next_point["y"] - curr_point["y"]
+
+        # Сохраняем все phantom точки
+        if "phantom" in curr_point.get("vertex", ""):
+            simplified.append(curr_point)
+            continue
+
         if dx1 == 0 and dy1 == 0 or dx2 == 0 and dy2 == 0:
             simplified.append(curr_point)
             continue
+
         angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
         angle = abs(((angle + 180) % 360) - 180)
-        vertex = curr_point.get("vertex", "")
-        if "start" in vertex or "end" in vertex or curr_point != next_point:  # Убираем повторы
+        # Сохраняем точки с более мягким порогом (30°–150°)
+        if 30 <= angle <= 150:
             simplified.append(curr_point)
-        elif 70 <= angle <= 110:
-            simplified.append(curr_point)
+
     simplified.append(points[-1])
     return simplified
 
