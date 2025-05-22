@@ -3,9 +3,18 @@ from math import sqrt
 from .graph import Graph
 from .builder import build_graph
 import logging
+
 from app.map.models.connection import Connection
 
 logger = logging.getLogger(__name__)
+
+# Маппинг floor_id -> реальный номер этажа
+FLOOR_ID_TO_NUMBER = {
+    1: 1,   # Уличный уровень
+    8: 1,   # Реальный 1-й этаж в здании
+    11: 2,  # Реальный 2-й этаж в здании
+    # Добавь другие этажи, если есть
+}
 
 def heuristic(current: tuple, goal: tuple) -> float:
     x1, y1, floor1 = current
@@ -37,38 +46,24 @@ def optimize_path(path: list, graph: Graph) -> list:
         prev = optimized_path[-1]
         next_vertex = path[i + 1]
 
-        # Пропускаем избыточные вершины, если они не меняют этаж или направление
-        if "mid_" in current or "phantom_" in current:
-            if current not in optimized_path:  # Избегаем дубликатов
-                optimized_path.append(current)
-        elif "segment_" in current or "outdoor_" in current:
-            # Ищем ближайшую фантомную точку или конец/начало
-            candidates = []
-            curr_floor = graph.vertices[current][2]
-            if current.endswith("_start"):
-                mid_vertex = f"mid_{current}_{current.replace('_start', '_end')}"
-                end_vertex = current.replace("_start", "_end")
-                if mid_vertex in graph.vertices and graph.vertices[mid_vertex][2] == curr_floor:
-                    candidates.append(mid_vertex)
-                if end_vertex in graph.vertices and graph.vertices[end_vertex][2] == curr_floor:
-                    candidates.append(end_vertex)
-            elif current.endswith("_end"):
-                mid_vertex = f"mid_{current.replace('_end', '_start')}_{current}"
-                start_vertex = current.replace("_end", "_start")
-                if mid_vertex in graph.vertices and graph.vertices[mid_vertex][2] == curr_floor:
-                    candidates.append(mid_vertex)
-                if start_vertex in graph.vertices and graph.vertices[start_vertex][2] == curr_floor:
-                    candidates.append(start_vertex)
+        # Пропускаем mid_ точки, если они не нужны для перехода этажей
+        curr_floor = graph.vertices[current][2]
+        prev_floor = graph.vertices[prev][2]
+        next_floor = graph.vertices[next_vertex][2]
 
-            if candidates:
-                nearest = find_nearest_point(graph.vertices[prev], candidates, graph)
-                if nearest and nearest != optimized_path[-1]:  # Избегаем дубликатов
-                    optimized_path.append(nearest)
-            if current not in optimized_path:  # Добавляем только если не дубликат
-                optimized_path.append(current)
+        if "mid_" in current:
+            # Добавляем mid_ только если это точка перехода между этажами или зданиями
+            if curr_floor != prev_floor or curr_floor != next_floor:
+                if current not in optimized_path:
+                    optimized_path.append(current)
+        elif current not in optimized_path:
+            optimized_path.append(current)
 
     optimized_path.append(path[-1])  # Завершаем end
     return optimized_path
+
+def get_real_floor(floor_id: int) -> int:
+    return FLOOR_ID_TO_NUMBER.get(floor_id, floor_id)  # Возвращаем реальный этаж или сам floor_id, если маппинг отсутствует
 
 def find_path(db, start: str, end: str, return_graph=False):
     logger.info(f"Starting pathfinding from {start} to {end} (A*)")
@@ -110,15 +105,45 @@ def find_path(db, start: str, end: str, return_graph=False):
             # Оптимизируем путь
             optimized_path = optimize_path(path, graph)
             weight = g_score[end]
+
+            # Формируем маршрут с реальными номерами этажей
+            route = []
+            current_floor = None
+            floor_points = []
+
+            for vertex in optimized_path:
+                floor_id = graph.vertices[vertex][2]
+                real_floor = get_real_floor(floor_id)
+
+                if current_floor is None:
+                    current_floor = real_floor
+                    floor_points = [{"x": graph.vertices[vertex][0], "y": graph.vertices[vertex][1], "vertex": vertex}]
+                elif current_floor != real_floor:
+                    route.append({"floor": current_floor, "points": floor_points})
+                    current_floor = real_floor
+                    floor_points = [{"x": graph.vertices[vertex][0], "y": graph.vertices[vertex][1], "vertex": vertex}]
+                else:
+                    floor_points.append({"x": graph.vertices[vertex][0], "y": graph.vertices[vertex][1], "vertex": vertex})
+
+            if floor_points:
+                route.append({"floor": current_floor, "points": floor_points})
+
             logger.info(f"Path found: {optimized_path}, weight={weight}")
-            return optimized_path, weight, graph if return_graph else optimized_path
+            return route, weight, graph if return_graph else route
 
         for neighbor, weight, _ in graph.edges.get(current, []):
-            # Проверяем, что переход между этажами возможен (через Connection)
             curr_floor = graph.vertices[current][2]
             next_floor = graph.vertices[neighbor][2]
-            if curr_floor != next_floor and not any(conn.from_segment_id or conn.from_outdoor_id for conn in db.query(Connection).filter_by(to_segment_id=neighbor.split('_')[1] if 'segment' in neighbor else None).all()):
-                continue  # Пропускаем, если нет связи между этажами
+            if curr_floor != next_floor:
+                # Проверяем, есть ли Connection для перехода между этажами
+                connection_exists = False
+                for conn in db.query(Connection).all():
+                    if (conn.from_floor_id == curr_floor and conn.to_floor_id == next_floor) or \
+                       (conn.from_floor_id == next_floor and conn.to_floor_id == curr_floor):
+                        connection_exists = True
+                        break
+                if not connection_exists:
+                    continue  # Пропускаем, если нет связи между этажами
 
             tentative_g_score = g_score[current] + weight
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
