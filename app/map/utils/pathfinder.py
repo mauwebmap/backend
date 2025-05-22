@@ -10,7 +10,6 @@ def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = Non
     try:
         x1, y1, floor_id = current
         x2, y2, floor_id2 = goal
-        # Используем floor_id для расчета эвристики
         floor_cost = abs(floor_id - floor_id2) * 30 if floor_id != floor_id2 else 0
         distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
@@ -54,6 +53,10 @@ def find_path(db, start: str, end: str, return_graph=False):
         logger.warning(f"Start {start} or end {end} not in graph vertices")
         return [], float('inf'), graph if return_graph else []
 
+    # Определяем building_id для start и end
+    start_building = next((b for b, coords in graph.vertices.items() if b == start), {}).get('building_id', None)
+    end_building = next((b for b, coords in graph.vertices.items() if b == end), {}).get('building_id', None)
+
     open_set = [(0, start)]
     came_from = {}
     g_score = {start: 0}
@@ -77,14 +80,20 @@ def find_path(db, start: str, end: str, return_graph=False):
             path.append(start)
             path.reverse()
 
-            # Добавляем все возможные противоположные и phantom точки
+            # Удаляем дубликаты, сохраняя порядок
             final_path = []
+            seen = set()
+            for vertex in path:
+                if vertex not in seen:
+                    seen.add(vertex)
+                    final_path.append(vertex)
+
             i = 0
-            while i < len(path):
-                vertex = path[i]
-                final_path.append(vertex)
-                if i < len(path) - 1:
-                    next_vertex = path[i + 1]
+            while i < len(final_path):
+                vertex = final_path[i]
+                final_path.append(vertex)  # Временное добавление для обработки
+                if i < len(final_path) - 1:
+                    next_vertex = final_path[i + 1]
                     current_coords = graph.vertices.get(vertex, (0, 0, 0))
                     next_coords = graph.vertices.get(next_vertex, (0, 0, 0))
                     # Определяем floor_number: 1 для outdoor_, иначе floor_id
@@ -92,10 +101,10 @@ def find_path(db, start: str, end: str, return_graph=False):
                     next_floor = 1 if "outdoor_" in next_vertex else next_coords[2]
                     # Добавляем противоположные точки для segment и outdoor
                     if ("segment_" in vertex or "outdoor_" in vertex) and "phantom" not in vertex:
-                        if vertex.endswith("_start"):
-                            opposite = vertex.replace("_start", "_end")
-                        elif vertex.endswith("_end"):
+                        if vertex.endswith("_end"):
                             opposite = vertex.replace("_end", "_start")
+                        elif vertex.endswith("_start"):
+                            opposite = vertex.replace("_start", "_end")
                         else:
                             i += 1
                             continue
@@ -105,20 +114,13 @@ def find_path(db, start: str, end: str, return_graph=False):
                                 if opposite in graph.vertices:
                                     for edge in graph.edges.get(vertex, []):
                                         if edge[0] == opposite:
-                                            # Добавляем оба конца, если это переход между сегментом и улицей
-                                            if opposite.endswith("_start") and current_floor != next_floor:
-                                                final_path.append(opposite)
-                                            elif (opposite, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(opposite, [])]:
-                                                final_path.append(opposite)
+                                            final_path.append(opposite)
                                             break
-                            else:
-                                for edge in graph.edges.get(vertex, []):
-                                    if edge[0] == opposite:
-                                        if opposite.endswith("_start") and current_floor != next_floor:
-                                            final_path.append(opposite)
-                                        elif (opposite, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(opposite, [])]:
-                                            final_path.append(opposite)
-                                        break
+                            # Дополнительная проверка для outdoor внутри одного здания
+                            elif start_building == end_building and "outdoor_" in vertex:
+                                final_path.remove(opposite) if opposite in final_path else None
+                                i -= 1  # Перепроверяем текущую позицию
+                                break
 
                     # Добавляем phantom точки между текущей и следующей вершиной
                     for potential_phantom in graph.vertices:
@@ -127,6 +129,7 @@ def find_path(db, start: str, end: str, return_graph=False):
                                (potential_phantom, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(potential_phantom, [])]:
                                 final_path.append(potential_phantom)
                 i += 1
+            final_path = list(dict.fromkeys(final_path))  # Удаляем дубликаты
 
             weight = g_score[end]
             logger.info(f"Path found: {final_path}, weight={weight}")
