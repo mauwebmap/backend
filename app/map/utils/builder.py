@@ -120,60 +120,48 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     building_ids = get_relevant_buildings(db, start, end)
     floor_ids = get_relevant_floors(db, start, end)
 
-    # Add rooms and create room-to-room connections for adjacent rooms
+    # Добавляем комнаты в граф
     rooms = db.query(Room).filter(
         Room.building_id.in_(building_ids),
         Room.floor_id.in_(floor_ids)
     ).all()
     
-    # Create a mapping of floor_id to rooms for faster lookup
-    rooms_by_floor = {}
+    # Добавляем комнаты в граф
     for room in rooms:
-        if room.floor_id not in rooms_by_floor:
-            rooms_by_floor[room.floor_id] = []
-        rooms_by_floor[room.floor_id].append(room)
         vertex = f"room_{room.id}"
         if vertex not in graph.vertices:
             graph.add_vertex(vertex, (room.cab_x, room.cab_y, room.floor_id))
 
-    # Connect adjacent rooms on the same floor
-    for floor_id, floor_rooms in rooms_by_floor.items():
-        for i, room1 in enumerate(floor_rooms):
-            for room2 in floor_rooms[i+1:]:
-                # Check if rooms are close enough to be considered adjacent (e.g., within 50 units)
-                dist = sqrt((room1.cab_x - room2.cab_x) ** 2 + (room1.cab_y - room2.cab_y) ** 2)
-                if dist < 50:  # Adjust this threshold as needed
-                    vertex1 = f"room_{room1.id}"
-                    vertex2 = f"room_{room2.id}"
-                    graph.add_edge(vertex1, vertex2, dist)
-                    logger.info(f"Added direct room connection: {vertex1} <-> {vertex2}, distance={dist}")
-
-    # Add segments and their connections
+    # Добавляем сегменты
     segments = db.query(Segment).filter(
         Segment.building_id.in_(building_ids),
         Segment.floor_id.in_(floor_ids)
     ).all()
     
-    # Create a mapping of segment IDs for faster lookup
+    # Создаем словарь сегментов для быстрого доступа
     segment_dict = {s.id: s for s in segments}
     
+    # Добавляем сегменты и их ребра
     for segment in segments:
         start_vertex = f"segment_{segment.id}_start"
         end_vertex = f"segment_{segment.id}_end"
+        
         if start_vertex not in graph.vertices:
             graph.add_vertex(start_vertex, (segment.start_x, segment.start_y, segment.floor_id))
         if end_vertex not in graph.vertices:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
+        
+        # Добавляем ребро сегмента
         weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
         logger.info(f"Added segment edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
-    # Process all connections
+    # Обрабатываем соединения
     connections = db.query(Connection).all()
     for conn in connections:
         weight = conn.weight if conn.weight else 1
         
-        # Handle room-to-segment connections (doors)
+        # Обрабатываем соединения комната-сегмент (двери)
         if conn.type == "дверь" and conn.room_id and conn.segment_id:
             room_vertex = f"room_{conn.room_id}"
             if room_vertex in graph.vertices and conn.segment_id in segment_dict:
@@ -186,41 +174,41 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     start_coords = graph.vertices[segment_start]
                     end_coords = graph.vertices[segment_end]
                     
-                    # Create phantom point for door connection
+                    # Создаем фантомную точку для соединения с дверью
                     phantom_coords = find_phantom_point(room_coords, start_coords, end_coords, None)
                     phantom_vertex = f"phantom_room_{conn.room_id}_segment_{conn.segment_id}"
                     graph.add_vertex(phantom_vertex, phantom_coords)
                     
-                    # Add edges with appropriate weights
+                    # Соединяем комнату с фантомной точкой
                     dist_to_phantom = sqrt((room_coords[0] - phantom_coords[0]) ** 2 + (room_coords[1] - phantom_coords[1]) ** 2)
                     graph.add_edge(room_vertex, phantom_vertex, dist_to_phantom)
                     
-                    # Connect phantom to both segment endpoints
+                    # Соединяем фантомную точку с концами сегмента
                     for segment_point in [segment_start, segment_end]:
                         segment_coords = graph.vertices[segment_point]
                         dist = sqrt((phantom_coords[0] - segment_coords[0]) ** 2 + (phantom_coords[1] - segment_coords[1]) ** 2)
                         graph.add_edge(phantom_vertex, segment_point, dist)
                     
                     logger.info(f"Added room-segment connection via phantom: {room_vertex} -> {phantom_vertex} -> {segment_start}/{segment_end}")
-
-        # Handle segment-to-segment connections
+        
+        # Обрабатываем соединения между сегментами
         elif conn.type in ["дверь", "лестница"] and conn.from_segment_id and conn.to_segment_id:
             if conn.from_segment_id in segment_dict and conn.to_segment_id in segment_dict:
                 from_vertex = f"segment_{conn.from_segment_id}_end"
                 to_vertex = f"segment_{conn.to_segment_id}_start"
                 
                 if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                    # For stairs, add additional weight based on floor difference
+                    # Для лестниц добавляем дополнительный вес за смену этажа
                     if conn.type == "лестница":
                         from_floor = graph.vertices[from_vertex][2]
                         to_floor = graph.vertices[to_vertex][2]
                         floor_diff = abs(to_floor - from_floor)
-                        weight = weight + floor_diff * 50  # Add penalty for floor changes
+                        weight = weight + floor_diff * 50
                     
                     graph.add_edge(from_vertex, to_vertex, weight)
                     logger.info(f"Added {conn.type} connection: {from_vertex} <-> {to_vertex}, weight={weight}")
-
-        # Handle outdoor connections
+        
+        # Обрабатываем уличные соединения
         elif conn.type in ["улица", "дверь"] and ((conn.from_segment_id and conn.to_outdoor_id) or (conn.from_outdoor_id and conn.to_segment_id)):
             if conn.from_segment_id and conn.to_outdoor_id:
                 from_vertex = f"segment_{conn.from_segment_id}_end"

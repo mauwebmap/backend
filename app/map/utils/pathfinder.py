@@ -6,30 +6,51 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None) -> float:
+def heuristic(current: tuple, goal: tuple, prev: tuple = None) -> float:
     x1, y1, floor1 = current
     x2, y2, floor2 = goal
     
-    # Basic Euclidean distance
+    # Евклидово расстояние
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
     
-    # Floor difference penalty
+    # Штраф за смену этажа
     floor_diff = abs(floor1 - floor2)
-    floor_cost = floor_diff * 50  # Penalty for changing floors
+    floor_cost = floor_diff * 50
     
-    # Direction change penalty
-    direction_penalty = 0
-    if prev:
-        px, py, _ = prev
-        dx1, dy1 = x1 - px, y1 - py
-        dx2, dy2 = x2 - x1, y2 - y1
-        if dx1 != 0 or dy1 != 0:
-            angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
-            angle = abs(((angle + 180) % 360) - 180)
-            if angle > 90:  # Penalize sharp turns
-                direction_penalty = angle * 0.5
-    
-    return distance + floor_cost + direction_penalty
+    return distance + floor_cost
+
+def optimize_path_with_phantoms(path: list, graph: Graph) -> list:
+    """Оптимизирует путь, добавляя фантомные точки только внутри сегментов"""
+    if len(path) <= 2:
+        return path
+
+    optimized = []
+    i = 0
+    while i < len(path):
+        current = path[i]
+        optimized.append(current)
+        
+        if i + 1 < len(path):
+            next_vertex = path[i + 1]
+            
+            # Если текущая вершина - комната, а следующая - часть сегмента
+            if current.startswith("room_") and ("segment_" in next_vertex or "outdoor_" in next_vertex):
+                # Проверяем, есть ли фантомная точка для этой комнаты на этом сегменте
+                segment_id = next_vertex.split("_")[1]
+                phantom = f"phantom_room_{current.split('_')[1]}_segment_{segment_id}"
+                if phantom in graph.vertices:
+                    optimized.append(phantom)
+            
+            # Если текущая вершина - часть сегмента, а следующая - комната
+            elif ("segment_" in current or "outdoor_" in current) and next_vertex.startswith("room_"):
+                segment_id = current.split("_")[1]
+                phantom = f"phantom_room_{next_vertex.split('_')[1]}_segment_{segment_id}"
+                if phantom in graph.vertices:
+                    optimized.append(phantom)
+        
+        i += 1
+
+    return optimized
 
 def find_path(db, start: str, end: str, return_graph=False):
     logger.info(f"Starting pathfinding from {start} to {end}")
@@ -44,12 +65,12 @@ def find_path(db, start: str, end: str, return_graph=False):
         logger.warning(f"Start {start} or end {end} not in graph vertices")
         return [], float('inf'), graph if return_graph else []
 
-    # Initialize data structures for A* search
-    open_set = [(0, start)]  # Priority queue of (f_score, vertex)
-    came_from = {}  # Keep track of the path
-    g_score = {start: 0}  # Cost from start to vertex
-    f_score = {start: heuristic(graph.vertices[start], graph.vertices[end])}  # Estimated total cost
-    processed = set()  # Keep track of processed vertices
+    # Инициализация для A*
+    open_set = [(0, start)]
+    came_from = {}
+    g_score = {start: 0}
+    f_score = {start: heuristic(graph.vertices[start], graph.vertices[end])}
+    processed = set()
 
     while open_set:
         current_f, current = heappop(open_set)
@@ -59,41 +80,36 @@ def find_path(db, start: str, end: str, return_graph=False):
         
         processed.add(current)
         
-        # Check if we've reached the goal
         if current == end:
-            # Reconstruct path
+            # Восстанавливаем базовый путь
             path = []
-            while current in came_from:
-                path.append(current)
-                current = came_from[current]
+            current_vertex = current
+            while current_vertex in came_from:
+                path.append(current_vertex)
+                current_vertex = came_from[current_vertex]
             path.append(start)
             path.reverse()
             
-            # Add intermediate points for segments
-            final_path = []
-            for i, vertex in enumerate(path):
-                final_path.append(vertex)
-                if i < len(path) - 1:
-                    # If current vertex is a segment endpoint, add the other endpoint
-                    if "_start" in vertex:
-                        opposite = vertex.replace("_start", "_end")
-                        if opposite in graph.vertices:
-                            final_path.append(opposite)
-                    elif "_end" in vertex:
-                        opposite = vertex.replace("_end", "_start")
-                        if opposite in graph.vertices:
-                            final_path.append(opposite)
+            # Оптимизируем путь, добавляя фантомные точки
+            final_path = optimize_path_with_phantoms(path, graph)
             
-            weight = g_score[end]
+            # Вычисляем итоговый вес пути
+            weight = 0
+            for i in range(len(final_path) - 1):
+                v1, v2 = final_path[i], final_path[i + 1]
+                for neighbor, w, _ in graph.edges[v1]:
+                    if neighbor == v2:
+                        weight += w
+                        break
+            
             logger.info(f"Path found: {final_path}, weight={weight}")
             return final_path, weight, graph if return_graph else final_path
 
-        # Process neighbors
+        # Обрабатываем соседей
         for neighbor, edge_weight, _ in graph.edges.get(current, []):
             tentative_g_score = g_score[current] + edge_weight
             
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-                # This path is better than any previous one
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
                 f_score[neighbor] = tentative_g_score + heuristic(
