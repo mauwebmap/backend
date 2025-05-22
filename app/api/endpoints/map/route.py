@@ -8,7 +8,10 @@ from app.map.models.outdoor_segment import OutdoorSegment
 from app.map.models.floor import Floor
 from app.map.models.connection import Connection
 from math import atan2, degrees, sqrt
+from app.map.utils.graph import Graph
 import logging
+
+
 
 logger = logging.getLogger(__name__)
 
