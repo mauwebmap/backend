@@ -154,7 +154,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         if end_vertex not in graph.vertices:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
         
-        # Соединяем концы сегмента
         weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight)
         logger.info(f"Added segment: {start_vertex} <-> {end_vertex}, weight={weight}")
@@ -177,7 +176,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     for conn in connections:
         weight = conn.weight if conn.weight else 2
 
-        # 1. Соединение комната-сегмент (через фантомную точку)
+        # 1. Соединение комната-сегмент
         if conn.room_id and conn.segment_id:
             room = rooms.get(conn.room_id)
             segment = segments.get(conn.segment_id)
@@ -187,7 +186,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     graph.add_vertex(room_vertex, (room.cab_x, room.cab_y, room.floor_id))
                 add_phantom_connection(graph, room_vertex, segment, weight)
 
-        # 2. Соединение сегмент-сегмент (лестницы и повороты)
+        # 2. Соединение сегмент-сегмент
         elif conn.from_segment_id and conn.to_segment_id:
             from_segment = segments.get(conn.from_segment_id)
             to_segment = segments.get(conn.to_segment_id)
@@ -204,18 +203,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     )
                     phantom_vertex = f"phantom_stair_{conn.id}"
                     graph.add_vertex(phantom_vertex, phantom_coords)
-                    
-                    # Соединяем конец лестницы с фантомной точкой
                     graph.add_edge(from_end, phantom_vertex, weight)
-                    
-                    # Соединяем фантомную точку с концом сегмента
-                    to_end = f"segment_{to_segment.id}_end"
-                    dist = sqrt((phantom_coords[0] - to_segment.end_x)**2 + (phantom_coords[1] - to_segment.end_y)**2)
-                    graph.add_edge(phantom_vertex, to_end, dist)
-                    
-                    logger.info(f"Added stair connection via phantom: {from_end} -> {phantom_vertex} -> {to_end}")
+                    graph.add_edge(phantom_vertex, to_start, weight)
+                    logger.info(f"Added stair connection via phantom: {from_end} -> {phantom_vertex} -> {to_start}")
                 else:
-                    # Для обычных соединений
                     graph.add_edge(from_end, to_start, weight)
                     logger.info(f"Added segment connection: {from_end} <-> {to_start}")
 
@@ -224,36 +215,38 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             from_segment = segments.get(conn.from_segment_id)
             to_outdoor = outdoors.get(conn.to_outdoor_id)
             if from_segment and to_outdoor:
-                # При выходе на улицу создаем фантомную точку на уличном сегменте
                 from_end = f"segment_{from_segment.id}_end"
-                phantom_coords = find_phantom_point(
-                    (from_segment.end_x, from_segment.end_y, 1),
-                    (to_outdoor.start_x, to_outdoor.start_y, 1),
-                    (to_outdoor.end_x, to_outdoor.end_y, 1)
-                )
-                phantom_vertex = f"phantom_exit_{conn.id}"
-                graph.add_vertex(phantom_vertex, phantom_coords)
+                to_start = f"outdoor_{to_outdoor.id}_start"
+                to_end = f"outdoor_{to_outdoor.id}_end"
                 
-                graph.add_edge(from_end, phantom_vertex, weight)
-                graph.add_edge(phantom_vertex, f"outdoor_{to_outdoor.id}_end", weight)
-                logger.info(f"Added exit connection via phantom: {from_end} -> {phantom_vertex}")
+                # Соединяем с обоими концами outdoor сегмента
+                graph.add_edge(from_end, to_start, weight)
+                graph.add_edge(from_end, to_end, weight)
+                logger.info(f"Added segment-outdoor connection: {from_end} <-> {to_start}/{to_end}")
 
         if conn.from_outdoor_id and conn.to_segment_id:
             from_outdoor = outdoors.get(conn.from_outdoor_id)
             to_segment = segments.get(conn.to_segment_id)
             if from_outdoor and to_segment:
-                # При входе в здание создаем фантомную точку на сегменте
-                phantom_coords = find_phantom_point(
-                    (from_outdoor.end_x, from_outdoor.end_y, to_segment.floor_id),
-                    (to_segment.start_x, to_segment.start_y, to_segment.floor_id),
-                    (to_segment.end_x, to_segment.end_y, to_segment.floor_id)
-                )
-                phantom_vertex = f"phantom_enter_{conn.id}"
-                graph.add_vertex(phantom_vertex, phantom_coords)
+                from_start = f"outdoor_{from_outdoor.id}_start"
+                from_end = f"outdoor_{from_outdoor.id}_end"
+                to_start = f"segment_{to_segment.id}_start"
                 
-                graph.add_edge(f"outdoor_{from_outdoor.id}_end", phantom_vertex, weight)
-                graph.add_edge(phantom_vertex, f"segment_{to_segment.id}_start", weight)
-                logger.info(f"Added entrance connection via phantom: {phantom_vertex} -> segment_{to_segment.id}_start")
+                # Соединяем с обоими концами outdoor сегмента
+                graph.add_edge(from_start, to_start, weight)
+                graph.add_edge(from_end, to_start, weight)
+                logger.info(f"Added outdoor-segment connection: {from_start}/{from_end} <-> {to_start}")
+
+        # 4. Соединения между outdoor сегментами
+        if conn.from_outdoor_id and conn.to_outdoor_id:
+            from_outdoor = outdoors.get(conn.from_outdoor_id)
+            to_outdoor = outdoors.get(conn.to_outdoor_id)
+            if from_outdoor and to_outdoor:
+                # Соединяем все концы обоих сегментов
+                for from_end in [f"outdoor_{from_outdoor.id}_start", f"outdoor_{from_outdoor.id}_end"]:
+                    for to_end in [f"outdoor_{to_outdoor.id}_start", f"outdoor_{to_outdoor.id}_end"]:
+                        graph.add_edge(from_end, to_end, weight)
+                logger.info(f"Added outdoor-outdoor connection: outdoor_{from_outdoor.id} <-> outdoor_{to_outdoor.id}")
 
     logger.info(f"Graph built successfully with {len(graph.vertices)} vertices")
     return graph
