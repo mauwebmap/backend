@@ -27,14 +27,18 @@ def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = Non
         if (abs(dx1) < 10 and abs(dx2) < 10) or (abs(dy1) < 10 and abs(dy2) < 10):
             straight_bonus = -10
 
-    # Дополнительный бонус за приближение к конечной точке через _end точки
+    # Бонус за _end точки
     current_vertex = [v for v, c in graph.vertices.items() if c == current][0]
     if "_end" in current_vertex and current_vertex.split("_")[0] in ["segment", "outdoor"]:
-        distance *= 0.9  # Уменьшаем вес для _end точек, чтобы они были предпочтительнее
+        distance *= 0.9  # Уменьшаем вес для _end точек
 
     # Бонус за phantom точки
     if "phantom_" in current_vertex:
         distance *= 0.8  # Уменьшаем вес для phantom точек
+
+    # Дополнительный приоритет для _start точек при выходе на улицу
+    if "_start" in current_vertex and prev and graph.vertices[prev][2] != 1 and floor1 == 1:
+        distance *= 0.7  # Уменьшаем вес для _start точек при выходе из здания
 
     return distance + floor_cost + deviation_cost + straight_bonus
 
@@ -82,6 +86,8 @@ def find_path(db, start: str, end: str, return_graph=False):
                 final_path.append(vertex)
                 if i < len(path) - 1:
                     next_vertex = path[i + 1]
+                    current_coords = graph.vertices[vertex]
+                    next_coords = graph.vertices[next_vertex]
                     # Добавляем противоположные точки для segment и outdoor
                     if ("segment_" in vertex or "outdoor_" in vertex) and "phantom" not in vertex:
                         if vertex.endswith("_start"):
@@ -92,10 +98,13 @@ def find_path(db, start: str, end: str, return_graph=False):
                             i += 1
                             continue
                         if opposite in graph.vertices and opposite not in final_path:
-                            # Проверяем все возможные связи
+                            # Проверяем все возможные связи и добавляем _start при выходе на улицу
                             for edge in graph.edges.get(vertex, []):
-                                if edge[0] == opposite and (opposite, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(opposite, [])]:
-                                    final_path.append(opposite)
+                                if edge[0] == opposite:
+                                    if opposite.endswith("_start") and current_coords[2] != 1 and next_coords[2] == 1:
+                                        final_path.append(opposite)
+                                    elif (opposite, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(opposite, [])]:
+                                        final_path.append(opposite)
                                     break
 
                     # Добавляем phantom точки между текущей и следующей вершиной
