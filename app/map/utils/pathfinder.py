@@ -28,8 +28,8 @@ def find_path(db, start: str, end: str, return_graph=False):
         return [], float('inf'), graph if return_graph else []
 
     # Извлекаем данные о стартовой и конечной точках
-    start_data = graph.vertices[start]
-    end_data = graph.vertices[end]
+    start_data = graph.get_vertex_data(start)
+    end_data = graph.get_vertex_data(end)
     start_building = start_data["building_id"]
     end_building = end_data["building_id"]
     start_coords = start_data["coords"]
@@ -66,7 +66,7 @@ def find_path(db, start: str, end: str, return_graph=False):
             current_floor = None
             points = []
             for i, vertex in enumerate(path):
-                vertex_data = graph.vertices[vertex]
+                vertex_data = graph.get_vertex_data(vertex)
                 floor_id = vertex_data["coords"][2]
                 floor_number = 1 if vertex_data["building_id"] is None else floor_id  # outdoor = 1, else floor_id
 
@@ -85,15 +85,16 @@ def find_path(db, start: str, end: str, return_graph=False):
                 route.append({"floor": current_floor, "points": points})
 
             # Исключаем outdoor, если здания одинаковые
-            if start_building == end_building:
+            if start_building == end_building and start_building is not None:
                 route = [segment for segment in route if not any("outdoor" in p["vertex"] for p in segment["points"])]
 
+            logger.info(f"Pathfinding completed: path={path}, weight={weight}")
             return path, weight, graph if return_graph else route
 
         try:
-            for neighbor, weight, _ in graph.edges.get(current, []):
+            for neighbor, weight, _ in graph.get_neighbors(current):
+                neighbor_data = graph.get_vertex_data(neighbor)
                 # Пропускаем outdoor вершины, если здания одинаковые
-                neighbor_data = graph.vertices[neighbor]
                 if start_building == end_building and start_building is not None and neighbor_data["building_id"] is None:
                     continue
 

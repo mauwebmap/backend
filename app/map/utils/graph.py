@@ -2,26 +2,27 @@
 from typing import Dict, List, Tuple, Union, Any
 from math import sqrt
 
+
 class Graph:
     def __init__(self):
-        # Dictionary of vertices: vertex -> (x, y, floor)
-        self.vertices: Dict[str, Tuple[float, float, int]] = {}
+        # Dictionary of vertices: vertex -> {"coords": (x, y, floor), "building_id": int | None}
+        self.vertices: Dict[str, dict] = {}
         # Dictionary of edges: vertex -> [(neighbor, weight, edge_data)]
         # edge_data can contain connection type and other metadata
         self.edges: Dict[str, List[Tuple[str, float, Dict[str, Any]]]] = {}
         # Список ориентиров для ALT (A* с ориентирами), пока не используем
         self.landmarks: List[str] = []
 
-    def add_vertex(self, vertex: str, coords: Tuple[float, float, int]) -> None:
-        """Add a vertex to the graph with its coordinates"""
+    def add_vertex(self, vertex: str, data: dict) -> None:
+        """Add a vertex to the graph with its coordinates and building_id"""
         if vertex not in self.vertices:
-            self.vertices[vertex] = coords
+            self.vertices[vertex] = data
             self.edges[vertex] = []
 
     def add_edge(self, from_vertex: str, to_vertex: str, weight: float, edge_data: Dict[str, Any] = None) -> None:
         """
         Add a bidirectional edge to the graph with optional metadata
-        
+
         Args:
             from_vertex: Source vertex
             to_vertex: Target vertex
@@ -34,10 +35,10 @@ class Graph:
             raise ValueError(f"Vertex {to_vertex} not found in graph")
 
         edge_data = edge_data or {}
-        
+
         # Add edge from_vertex -> to_vertex
         self.edges[from_vertex].append((to_vertex, weight, edge_data))
-        
+
         # Add reverse edge to_vertex -> from_vertex with same metadata
         self.edges[to_vertex].append((from_vertex, weight, edge_data))
 
@@ -45,7 +46,7 @@ class Graph:
         """Get metadata for the edge between two vertices"""
         if from_vertex not in self.edges:
             return {}
-            
+
         for neighbor, _, edge_data in self.edges[from_vertex]:
             if neighbor == to_vertex:
                 return edge_data
@@ -55,7 +56,7 @@ class Graph:
         """Get the weight of the edge between two vertices"""
         if from_vertex not in self.edges:
             return float('inf')
-            
+
         for neighbor, weight, _ in self.edges[from_vertex]:
             if neighbor == to_vertex:
                 return weight
@@ -70,5 +71,8 @@ class Graph:
         if not self.landmarks:
             return 0.0
         # Для простоты возвращаем 0, так как ориентиры пока не используются
-        # В будущем можно реализовать полноценную эвристику на основе ориентиров
         return 0.0
+
+    def get_vertex_data(self, vertex: str) -> dict:
+        """Get the full data (coords and building_id) for a vertex"""
+        return self.vertices.get(vertex, {"coords": (0, 0, 0), "building_id": None})
