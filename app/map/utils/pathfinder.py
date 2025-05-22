@@ -6,68 +6,30 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None, connection_type: str = None) -> float:
+def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None) -> float:
     x1, y1, floor1 = current
     x2, y2, floor2 = goal
     
-    # Base distance using Manhattan distance for better estimates in indoor environments
-    dx = abs(x2 - x1)
-    dy = abs(y2 - y1)
-    base_distance = dx + dy
+    # Basic Euclidean distance
+    distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
     
-    # Floor difference cost - higher penalty for floor changes
+    # Floor difference penalty
     floor_diff = abs(floor1 - floor2)
-    floor_cost = floor_diff * 100  # Increased penalty for floor changes
-    
-    # Connection type modifiers
-    connection_modifier = 0
-    if connection_type:
-        if connection_type == "лестница":
-            connection_modifier = 50 * floor_diff  # Additional cost for stairs
-        elif connection_type == "дверь":
-            connection_modifier = 10  # Small penalty for doors
+    floor_cost = floor_diff * 50  # Penalty for changing floors
     
     # Direction change penalty
     direction_penalty = 0
-    if prev and graph:
+    if prev:
         px, py, _ = prev
-        # Calculate direction changes
         dx1, dy1 = x1 - px, y1 - py
         dx2, dy2 = x2 - x1, y2 - y1
         if dx1 != 0 or dy1 != 0:
             angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
             angle = abs(((angle + 180) % 360) - 180)
-            if angle > 45:  # Penalize sharp turns
+            if angle > 90:  # Penalize sharp turns
                 direction_penalty = angle * 0.5
     
-    return base_distance + floor_cost + connection_modifier + direction_penalty
-
-def optimize_path(path: list, graph: Graph) -> list:
-    if len(path) <= 2:
-        return path
-
-    optimized_path = [path[0]]
-    current_floor = graph.vertices[path[0]][2]
-    
-    for i in range(1, len(path) - 1):
-        current = path[i]
-        next_vertex = path[i + 1]
-        vertex_floor = graph.vertices[current][2]
-        
-        # Always keep vertices that change floors
-        if vertex_floor != current_floor:
-            optimized_path.append(current)
-            current_floor = vertex_floor
-            continue
-            
-        # Keep connection points and room vertices
-        if ("segment_" in current and ("_start" in current or "_end" in current)) or \
-           "room_" in current or \
-           graph.vertices[current] != graph.vertices[next_vertex]:
-            optimized_path.append(current)
-    
-    optimized_path.append(path[-1])
-    return optimized_path
+    return distance + floor_cost + direction_penalty
 
 def find_path(db, start: str, end: str, return_graph=False):
     logger.info(f"Starting pathfinding from {start} to {end}")
@@ -82,60 +44,64 @@ def find_path(db, start: str, end: str, return_graph=False):
         logger.warning(f"Start {start} or end {end} not in graph vertices")
         return [], float('inf'), graph if return_graph else []
 
-    open_set = [(0, start)]
-    came_from = {}
-    g_score = {start: 0}
-    f_score = {start: heuristic(graph.vertices[start], graph.vertices[end])}
-    connection_types = {}  # Track connection types for better heuristics
-    processed_vertices = set()
+    # Initialize data structures for A* search
+    open_set = [(0, start)]  # Priority queue of (f_score, vertex)
+    came_from = {}  # Keep track of the path
+    g_score = {start: 0}  # Cost from start to vertex
+    f_score = {start: heuristic(graph.vertices[start], graph.vertices[end])}  # Estimated total cost
+    processed = set()  # Keep track of processed vertices
 
     while open_set:
         current_f, current = heappop(open_set)
         
-        if current in processed_vertices:
+        if current in processed:
             continue
-        processed_vertices.add(current)
-
+        
+        processed.add(current)
+        
+        # Check if we've reached the goal
         if current == end:
+            # Reconstruct path
             path = []
-            current_vertex = current
-            while current_vertex in came_from:
-                path.append(current_vertex)
-                current_vertex = came_from[current_vertex]
+            while current in came_from:
+                path.append(current)
+                current = came_from[current]
             path.append(start)
             path.reverse()
             
-            # Optimize the final path
-            final_path = optimize_path(path, graph)
+            # Add intermediate points for segments
+            final_path = []
+            for i, vertex in enumerate(path):
+                final_path.append(vertex)
+                if i < len(path) - 1:
+                    # If current vertex is a segment endpoint, add the other endpoint
+                    if "_start" in vertex:
+                        opposite = vertex.replace("_start", "_end")
+                        if opposite in graph.vertices:
+                            final_path.append(opposite)
+                    elif "_end" in vertex:
+                        opposite = vertex.replace("_end", "_start")
+                        if opposite in graph.vertices:
+                            final_path.append(opposite)
+            
             weight = g_score[end]
             logger.info(f"Path found: {final_path}, weight={weight}")
             return final_path, weight, graph if return_graph else final_path
 
-        prev_vertex = came_from.get(current, None)
-        
-        for neighbor, weight, edge_data in graph.edges.get(current, []):
-            # Get connection type if available
-            connection_type = edge_data.get('type') if isinstance(edge_data, dict) else None
-            
-            # Calculate tentative g_score
-            tentative_g_score = g_score[current] + weight
+        # Process neighbors
+        for neighbor, edge_weight, _ in graph.edges.get(current, []):
+            tentative_g_score = g_score[current] + edge_weight
             
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                # This path is better than any previous one
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                connection_types[neighbor] = connection_type
-                
-                # Calculate f_score with connection type consideration
                 f_score[neighbor] = tentative_g_score + heuristic(
                     graph.vertices[neighbor],
                     graph.vertices[end],
-                    graph.vertices[current],
-                    graph,
-                    connection_type
+                    graph.vertices[current]
                 )
-                
                 heappush(open_set, (f_score[neighbor], neighbor))
-                logger.debug(f"Added to open_set: {neighbor}, f_score={f_score[neighbor]}")
 
     logger.warning(f"No path found from {start} to {end}")
     return [], float('inf'), graph if return_graph else []
