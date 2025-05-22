@@ -96,11 +96,15 @@ def find_path(db, start: str, end: str, return_graph=False):
                             i += 1
                             continue
                         if opposite in graph.vertices and opposite not in final_path:
-                            # Добавляем противоположную точку, если она связана с текущей
+                            # Проверяем связь и добавляем
                             for edge in graph.edges.get(vertex, []):
                                 if edge[0] == opposite:
-                                    # Всегда добавляем противоположную точку, если она связана
-                                    final_path.append(opposite)
+                                    # Обязательное добавление пар _start/_end при переходе дверь → улица или улица → дверь
+                                    if ("segment_" in vertex and "outdoor_" in next_vertex) or ("outdoor_" in vertex and "segment_" in next_vertex):
+                                        if opposite.endswith("_start") and current_coords[2] != next_coords[2]:
+                                            final_path.append(opposite)
+                                        elif (opposite, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(opposite, [])]:
+                                            final_path.append(opposite)
                                     break
 
                     # Добавляем phantom точки между текущей и следующей вершиной
