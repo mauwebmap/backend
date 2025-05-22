@@ -30,7 +30,7 @@ def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = Non
     if preferred_path and prev:
         current_vertex = [v for v, c in graph.vertices.items() if c == current][0]
         next_vertex = [v for v, c in graph.vertices.items() if c == goal][0]
-        if current_vertex in preferred_path and next_vertex in preferred  path:
+        if current_vertex in preferred_path and next_vertex in preferred_path:
             idx1 = preferred_path.index(current_vertex)
             idx2 = preferred_path.index(next_vertex)
             if abs(idx1 - idx2) == 1:
