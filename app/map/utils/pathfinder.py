@@ -1,44 +1,18 @@
+# backend/app/map/utils/pathfinder.py
 from heapq import heappush, heappop
-from math import sqrt, atan2, degrees
+from math import sqrt
 from .graph import Graph
 from .builder import build_graph
 import logging
 
 logger = logging.getLogger(__name__)
 
-def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None) -> float:
-    try:
-        x1, y1, floor_id = current
-        x2, y2, floor_id2 = goal
-        floor_cost = abs(floor_id - floor_id2) * 30 if floor_id != floor_id2 else 0
-        distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
-        deviation_cost = 0
-        straight_bonus = 0
-        if prev and graph:
-            px, py, _ = prev
-            dx1, dy1 = x1 - px, y1 - py
-            dx2, dy2 = x2 - x1, y2 - y1
-            if dx1 != 0 or dy1 != 0:
-                angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
-                angle = abs(((angle + 180) % 360) - 180)
-                if angle < 70 or angle > 110:
-                    deviation_cost = (abs(angle - 90)) * 5
-            if (abs(dx1) < 10 and abs(dx2) < 10) or (abs(dy1) < 10 and abs(dy2) < 10):
-                straight_bonus = -10
-
-        current_vertex = [v for v, c in graph.vertices.items() if c == current][0] if graph else "unknown"
-        if "_end" in current_vertex and current_vertex.split("_")[0] in ["segment", "outdoor"]:
-            distance *= 0.9
-        if "phantom_" in current_vertex:
-            distance *= 0.8
-        if "_start" in current_vertex and prev and graph.vertices.get(prev) and graph.vertices[prev][2] != 1 and floor_id == 1:
-            distance *= 0.7
-
-        return distance + floor_cost + deviation_cost + straight_bonus
-    except Exception as e:
-        logger.error(f"Error in heuristic for current={current}, goal={goal}, prev={prev}: {e}")
-        return float('inf')
+def heuristic(current: tuple, goal: tuple) -> float:
+    x1, y1, floor_id1 = current
+    x2, y2, floor_id2 = goal
+    distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+    floor_cost = abs(floor_id1 - floor_id2) * 30 if floor_id1 != floor_id2 else 0
+    return distance + floor_cost
 
 def find_path(db, start: str, end: str, return_graph=False):
     logger.info(f"Starting pathfinding from {start} to {end}")
@@ -53,14 +27,18 @@ def find_path(db, start: str, end: str, return_graph=False):
         logger.warning(f"Start {start} or end {end} not in graph vertices")
         return [], float('inf'), graph if return_graph else []
 
-    # Определяем building_id для start и end
-    start_building = next((b for b, coords in graph.vertices.items() if b == start), {}).get('building_id', None)
-    end_building = next((b for b, coords in graph.vertices.items() if b == end), {}).get('building_id', None)
+    # Извлекаем данные о стартовой и конечной точках
+    start_data = graph.vertices[start]
+    end_data = graph.vertices[end]
+    start_building = start_data["building_id"]
+    end_building = end_data["building_id"]
+    start_coords = start_data["coords"]
+    end_coords = end_data["coords"]
 
     open_set = [(0, start)]
     came_from = {}
     g_score = {start: 0}
-    f_score = {start: heuristic(graph.vertices[start], graph.vertices[end], None, graph)}
+    f_score = {start: heuristic(start_coords, end_coords)}
     processed_vertices = set()
 
     logger.info(f"Starting A* search with initial open_set: {open_set}")
@@ -80,76 +58,50 @@ def find_path(db, start: str, end: str, return_graph=False):
             path.append(start)
             path.reverse()
 
-            # Удаляем дубликаты, сохраняя порядок
-            final_path = []
-            seen = set()
-            for vertex in path:
-                if vertex not in seen:
-                    seen.add(vertex)
-                    final_path.append(vertex)
-
-            i = 0
-            while i < len(final_path):
-                vertex = final_path[i]
-                final_path.append(vertex)  # Временное добавление для обработки
-                if i < len(final_path) - 1:
-                    next_vertex = final_path[i + 1]
-                    current_coords = graph.vertices.get(vertex, (0, 0, 0))
-                    next_coords = graph.vertices.get(next_vertex, (0, 0, 0))
-                    # Определяем floor_number: 1 для outdoor_, иначе floor_id
-                    current_floor = 1 if "outdoor_" in vertex else current_coords[2]
-                    next_floor = 1 if "outdoor_" in next_vertex else next_coords[2]
-                    # Добавляем противоположные точки для segment и outdoor
-                    if ("segment_" in vertex or "outdoor_" in vertex) and "phantom" not in vertex:
-                        if vertex.endswith("_end"):
-                            opposite = vertex.replace("_end", "_start")
-                        elif vertex.endswith("_start"):
-                            opposite = vertex.replace("_start", "_end")
-                        else:
-                            i += 1
-                            continue
-                        if opposite in graph.vertices and opposite not in final_path:
-                            # Обязательное добавление пар _start/_end при переходе дверь → улица или улица → дверь
-                            if ("segment_" in vertex and "outdoor_" in next_vertex) or ("outdoor_" in vertex and "segment_" in next_vertex):
-                                if opposite in graph.vertices:
-                                    for edge in graph.edges.get(vertex, []):
-                                        if edge[0] == opposite:
-                                            final_path.append(opposite)
-                                            break
-                            # Дополнительная проверка для outdoor внутри одного здания
-                            elif start_building == end_building and "outdoor_" in vertex:
-                                final_path.remove(opposite) if opposite in final_path else None
-                                i -= 1  # Перепроверяем текущую позицию
-                                break
-
-                    # Добавляем phantom точки между текущей и следующей вершиной
-                    for potential_phantom in graph.vertices:
-                        if potential_phantom.startswith("phantom_") and potential_phantom not in final_path:
-                            if (vertex, potential_phantom) in [(e[0], e[1]) for e in graph.edges.get(vertex, [])] and \
-                               (potential_phantom, next_vertex) in [(e[0], e[1]) for e in graph.edges.get(potential_phantom, [])]:
-                                final_path.append(potential_phantom)
-                i += 1
-            final_path = list(dict.fromkeys(final_path))  # Удаляем дубликаты
-
             weight = g_score[end]
-            logger.info(f"Path found: {final_path}, weight={weight}")
-            return final_path, weight, graph if return_graph else final_path
+            logger.info(f"Path found: {path}, weight={weight}")
 
-        prev_vertex = came_from.get(current, None)
-        prev_coords = graph.vertices.get(prev_vertex) if prev_vertex else None
+            # Формируем маршрут с этажами
+            route = []
+            current_floor = None
+            points = []
+            for i, vertex in enumerate(path):
+                vertex_data = graph.vertices[vertex]
+                floor_id = vertex_data["coords"][2]
+                floor_number = 1 if vertex_data["building_id"] is None else floor_id  # outdoor = 1, else floor_id
+
+                if i == 0:
+                    current_floor = floor_number
+                    points.append({"x": vertex_data["coords"][0], "y": vertex_data["coords"][1], "vertex": vertex})
+                elif floor_number != current_floor or i == len(path) - 1:
+                    if points:
+                        route.append({"floor": current_floor, "points": points})
+                    current_floor = floor_number
+                    points = [{"x": vertex_data["coords"][0], "y": vertex_data["coords"][1], "vertex": vertex}]
+                else:
+                    points.append({"x": vertex_data["coords"][0], "y": vertex_data["coords"][1], "vertex": vertex})
+
+            if points:
+                route.append({"floor": current_floor, "points": points})
+
+            # Исключаем outdoor, если здания одинаковые
+            if start_building == end_building:
+                route = [segment for segment in route if not any("outdoor" in p["vertex"] for p in segment["points"])]
+
+            return path, weight, graph if return_graph else route
 
         try:
             for neighbor, weight, _ in graph.edges.get(current, []):
-                if weight > 100:
-                    weight *= 1.5
+                # Пропускаем outdoor вершины, если здания одинаковые
+                neighbor_data = graph.vertices[neighbor]
+                if start_building == end_building and start_building is not None and neighbor_data["building_id"] is None:
+                    continue
 
                 tentative_g_score = g_score[current] + weight
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + heuristic(
-                        graph.vertices[neighbor], graph.vertices[end], graph.vertices.get(current), graph
-                    )
+                    f_score[neighbor] = tentative_g_score + heuristic(neighbor_data["coords"], end_coords)
                     heappush(open_set, (f_score[neighbor], neighbor))
                     logger.debug(f"Added to open_set: {neighbor}, f_score={f_score[neighbor]}")
         except Exception as e:
