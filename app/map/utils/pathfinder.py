@@ -4,6 +4,8 @@ from .graph import Graph
 from .builder import build_graph
 import logging
 
+from ..models.connection import Connection
+
 logger = logging.getLogger(__name__)
 
 # Маппинг floor_id -> реальный номер этажа
