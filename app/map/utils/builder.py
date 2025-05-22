@@ -133,6 +133,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         Segment.building_id.in_(building_ids),
         Segment.floor_id.in_(floor_ids)
     ).all()
+    edges = {}
     for segment in segments:
         start_vertex = f"segment_{segment.id}_start"
         end_vertex = f"segment_{segment.id}_end"
@@ -141,9 +142,12 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         if end_vertex not in graph.vertices:
             graph.add_vertex(end_vertex, (segment.end_x, segment.end_y, segment.floor_id))
         weight = sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
-        graph.add_edge(start_vertex, end_vertex, weight)
-        graph.add_edge(end_vertex, start_vertex, weight)
-        logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
+        if (start_vertex, end_vertex) not in edges and (end_vertex, start_vertex) not in edges:
+            graph.add_edge(start_vertex, end_vertex, weight)
+            graph.add_edge(end_vertex, start_vertex, weight)
+            edges[(start_vertex, end_vertex)] = True
+            edges[(end_vertex, start_vertex)] = True
+            logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
     outdoor_segments = db.query(OutdoorSegment).all()
     for outdoor in outdoor_segments:

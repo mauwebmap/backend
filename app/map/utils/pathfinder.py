@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None) -> float:
     x1, y1, floor1 = current
     x2, y2, floor2 = goal
-    floor_cost = abs(floor1 - floor2) * 50  # Штраф за этаж
+    floor_cost = abs(floor1 - floor2) * 50
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
     deviation_cost = 0
@@ -21,8 +21,12 @@ def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = Non
             angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
             angle = abs(((angle + 180) % 360) - 180)
             if angle < 70 or angle > 110:
-                deviation_cost = (abs(angle - 90)) * 5  # Увеличенный штраф за резкие повороты
-    return distance + floor_cost + deviation_cost
+                deviation_cost = (abs(angle - 90)) * 10  # Увеличенный штраф
+    # Бонус за движение вдоль прямой линии
+    straight_bonus = 0
+    if prev and abs(x1 - px) / (abs(y1 - py) + 1e-6) < 0.1 and abs(x2 - x1) / (abs(y2 - y1) + 1e-6) < 0.1:
+        straight_bonus = -5
+    return distance + floor_cost + deviation_cost + straight_bonus
 
 def optimize_path(path: list, graph: Graph) -> list:
     if len(path) <= 2:
@@ -34,19 +38,11 @@ def optimize_path(path: list, graph: Graph) -> list:
         prev = optimized_path[-1]
         next_vertex = path[i + 1]
 
-        # Пропускаем, если текущая вершина — это mid_ или phantom_ без изменения направления
-        if "mid_" in current or "phantom_" in current:
+        # Пропускаем только избыточные mid_ или phantom_ вершины
+        if ("mid_" in current or "phantom_" in current) and graph.vertices[current] == graph.vertices[next_vertex]:
             continue
 
-        # Добавляем только если это изменение направления или конец сегмента
-        curr_coords = graph.vertices[current]
-        prev_coords = graph.vertices[prev]
-        next_coords = graph.vertices[next_vertex]
-        dx1, dy1 = curr_coords[0] - prev_coords[0], curr_coords[1] - prev_coords[1]
-        dx2, dy2 = next_coords[0] - curr_coords[0], next_coords[1] - curr_coords[1]
-        if dx1 * dx2 + dy1 * dy2 < 0 or "end" in current or "start" in current:
-            optimized_path.append(current)
-
+        optimized_path.append(current)
     optimized_path.append(path[-1])
     return optimized_path
 
@@ -63,13 +59,13 @@ def find_path(db, start: str, end: str, return_graph=False):
         logger.warning(f"Start {start} or end {end} not in graph vertices")
         return [], float('inf'), graph if return_graph else []
 
-    open_set = [(0, start)]  # (f_score, vertex)
+    open_set = [(0, start)]
     came_from = {}
     g_score = {start: 0}
     f_score = {start: heuristic(graph.vertices[start], graph.vertices[end], None, graph)}
     processed_vertices = set()
 
-    logger.info(f"Starting A* search with initial open_set: {open_set}")
+    logger.info(f"Starting A* search with initial open_set: {(0, start)}")
     while open_set:
         current_f, current = heappop(open_set)
         logger.debug(f"Processing vertex: {current}, f_score={current_f}")
@@ -86,7 +82,18 @@ def find_path(db, start: str, end: str, return_graph=False):
             path.append(start)
             path.reverse()
 
-            # Оптимизируем путь
+            # Проверяем короткий путь через phantom вершины
+            start_coords = graph.vertices[start]
+            end_coords = graph.vertices[end]
+            if sqrt((end_coords[0] - start_coords[0]) ** 2 + (end_coords[1] - start_coords[1]) ** 2) < 100:
+                phantom_start = [v for v in graph.vertices if v.startswith(f"phantom_{start.split('_')[1]}_") and v in path]
+                phantom_end = [v for v in graph.vertices if v.startswith(f"phantom_{end.split('_')[1]}_") and v in path]
+                if phantom_start and phantom_end:
+                    short_path = [start] + phantom_start + phantom_end + [end]
+                    short_weight = sum(graph.get_edge_weight(short_path[i], short_path[i+1]) for i in range(len(short_path)-1))
+                    if short_weight < g_score[end]:
+                        path = short_path
+
             final_path = optimize_path(path, graph)
             weight = g_score[end]
             logger.info(f"Path found: {final_path}, weight={weight}")
@@ -96,12 +103,6 @@ def find_path(db, start: str, end: str, return_graph=False):
         prev_coords = graph.vertices[prev_vertex] if prev_vertex else None
 
         for neighbor, weight, _ in graph.edges.get(current, []):
-            # Проверяем, что переход между вершинами следует вдоль сегмента
-            curr_coords = graph.vertices[current]
-            next_coords = graph.vertices[neighbor]
-            if prev_coords and abs(curr_coords[0] - next_coords[0]) > 50 and abs(curr_coords[1] - next_coords[1]) > 50:
-                continue  # Пропускаем слишком большие "прыжки"
-
             tentative_g_score = g_score[current] + weight
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
