@@ -1,32 +1,20 @@
 from heapq import heappush, heappop
-from math import sqrt, atan2, degrees
+from math import sqrt
 from .graph import Graph
 from .builder import build_graph
 import logging
 
 logger = logging.getLogger(__name__)
 
-def heuristic(current: tuple, goal: tuple, prev: tuple = None, graph: dict = None) -> float:
+def heuristic(current: tuple, goal: tuple) -> float:
     x1, y1, floor1 = current
     x2, y2, floor2 = goal
-    floor_cost = abs(floor1 - floor2) * 10  # Уменьшен штраф до 10
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
-    deviation_cost = 0
-    if prev and graph:
-        px, py, _ = prev
-        dx1, dy1 = x1 - px, y1 - py
-        dx2, dy2 = x2 - x1, y2 - y1
-        if dx1 != 0 or dy1 != 0:
-            angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
-            angle = abs(((angle + 180) % 360) - 180)
-            if angle < 70 or angle > 110:
-                deviation_cost = (abs(angle - 90)) * 1
-
-    return distance + floor_cost + deviation_cost
+    floor_cost = 0 if floor1 == floor2 else 10  # Минимальный штраф для разных этажей
+    return distance + floor_cost
 
 def find_path(db, start: str, end: str, return_graph=False):
-    logger.info(f"Starting pathfinding from {start} to {end}")
+    logger.info(f"Starting pathfinding from {start} to {end} (reverse A*)")
     try:
         graph = build_graph(db, start, end)
         logger.info(f"Graph built with {len(graph.vertices)} vertices")
@@ -38,17 +26,14 @@ def find_path(db, start: str, end: str, return_graph=False):
         logger.warning(f"Start {start} or end {end} not in graph vertices")
         return [], float('inf'), graph if return_graph else []
 
-    open_set = [(0, start)]
+    # Обратный A*: начинаем от end к start
+    open_set = [(0, end)]  # (f_score, vertex)
     came_from = {}
-    g_score = {start: 0}
-    f_score = {start: heuristic(graph.vertices[start], graph.vertices[end], None, graph)}
+    g_score = {end: 0}
+    f_score = {end: heuristic(graph.vertices[end], graph.vertices[start])}
     processed_vertices = set()
 
-    logger.info(f"Starting A* search with initial open_set: {open_set}")
-    start_floor = graph.vertices[start][2]
-    end_floor = graph.vertices[end][2]
-    must_change_floor = start_floor != end_floor
-
+    logger.info(f"Starting reverse A* search with initial open_set: {open_set}")
     while open_set:
         current_f, current = heappop(open_set)
         logger.debug(f"Processing vertex: {current}, f_score={current_f}")
@@ -57,94 +42,40 @@ def find_path(db, start: str, end: str, return_graph=False):
             continue
         processed_vertices.add(current)
 
-        if current == end:
+        if current == start:
             path = []
             while current in came_from:
                 path.append(current)
                 current = came_from[current]
-            path.append(start)
-            path.reverse()
+            path.append(end)
+            path.reverse()  # Переворачиваем путь, чтобы он шел от start к end
 
-            # Улучшенное добавление противоположных точек
-            final_path = []
-            goal_coords = graph.vertices[end]
-            i = 0
-            while i < len(path):
+            # Оптимизация пути: добавляем фантомные точки, если это не start или end
+            optimized_path = [path[0]]  # Начинаем с start
+            for i in range(1, len(path) - 1):
                 vertex = path[i]
-                final_path.append(vertex)
-                if i < len(path) - 1 and ("segment_" in vertex or "outdoor_" in vertex):
-                    if vertex.endswith("_start"):
-                        opposite = vertex.replace("_start", "_end")
-                    elif vertex.endswith("_end"):
-                        opposite = vertex.replace("_end", "_start")
-                    else:
-                        i += 1
-                        continue
-
-                    if opposite in graph.vertices and opposite not in final_path:
-                        curr_coords = graph.vertices[vertex]
-                        opp_coords = graph.vertices[opposite]
+                if "mid_" in vertex:  # Используем фантомную точку
+                    optimized_path.append(vertex)
+                elif "segment_" in vertex or "outdoor_" in vertex:
+                    # Проверяем, есть ли фантомная точка для этого сегмента/аутдора
+                    if i < len(path) - 2:
                         next_vertex = path[i + 1]
-                        next_coords = graph.vertices[next_vertex]
+                        mid_vertex = f"mid_{vertex}_{next_vertex}" if vertex.endswith("_start") else f"mid_{next_vertex}_{vertex}"
+                        if mid_vertex in graph.vertices:
+                            optimized_path.append(mid_vertex)
+                    optimized_path.append(vertex)
+            optimized_path.append(path[-1])  # Завершаем end
 
-                        # Проверяем, ближе ли противоположная точка к цели
-                        dist_to_goal_from_curr = sqrt((goal_coords[0] - curr_coords[0]) ** 2 + (goal_coords[1] - curr_coords[1]) ** 2)
-                        dist_to_goal_from_opp = sqrt((goal_coords[0] - opp_coords[0]) ** 2 + (goal_coords[1] - opp_coords[1]) ** 2)
-                        dist_to_next_from_opp = sqrt((next_coords[0] - opp_coords[0]) ** 2 + (next_coords[1] - opp_coords[1]) ** 2)
-
-                        # Проверяем угол направления
-                        dx1, dy1 = opp_coords[0] - curr_coords[0], opp_coords[1] - curr_coords[1]
-                        dx2, dy2 = goal_coords[0] - curr_coords[0], goal_coords[1] - curr_coords[1]
-                        if dx1 != 0 or dy1 != 0:
-                            angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
-                            angle = abs(((angle + 180) % 360) - 180)
-                            if dist_to_goal_from_opp < dist_to_goal_from_curr and angle < 90:
-                                final_path.append(opposite)
-                                i += 1  # Пропускаем следующую точку
-                i += 1
-
-            # Проверяем фантомные точки для сокращения пути
-            optimized_path = []
-            i = 0
-            while i < len(final_path):
-                vertex = final_path[i]
-                optimized_path.append(vertex)
-                if i < len(final_path) - 1 and "phantom_" in vertex:
-                    curr_coords = graph.vertices[vertex]
-                    next_vertex = final_path[i + 1]
-                    next_coords = graph.vertices[next_vertex]
-                    goal_coords = graph.vertices[end]
-                    dist_to_next = sqrt((next_coords[0] - curr_coords[0]) ** 2 + (next_coords[1] - curr_coords[1]) ** 2)
-                    if dist_to_next < 50:
-                        i += 1  # Пропускаем длинный сегмент
-                i += 1
-
-            weight = g_score[end]
+            weight = g_score[start]
             logger.info(f"Path found: {optimized_path}, weight={weight}")
             return optimized_path, weight, graph if return_graph else optimized_path
 
-        prev_vertex = came_from.get(current, None)
-        prev_coords = graph.vertices[prev_vertex] if prev_vertex else None
-        curr_coords = graph.vertices[current]
-        goal_coords = graph.vertices[end]
-
         for neighbor, weight, _ in graph.edges.get(current, []):
-            # Проверяем этажность
-            curr_floor = curr_coords[2]
-            neighbor_coords = graph.vertices[neighbor]
-            neighbor_floor = neighbor_coords[2]
-            if must_change_floor and curr_floor == start_floor and neighbor_floor == start_floor:
-                continue  # Если нужно сменить этаж, пропускаем вершины на старом этаже после первой проверки
-            if curr_floor != neighbor_floor:
-                weight += 10  # Штраф за переход между этажами
-
             tentative_g_score = g_score[current] + weight
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                f_score[neighbor] = tentative_g_score + heuristic(
-                    graph.vertices[neighbor], graph.vertices[end], graph.vertices[current], graph
-                )
+                f_score[neighbor] = tentative_g_score + heuristic(graph.vertices[neighbor], graph.vertices[start])
                 heappush(open_set, (f_score[neighbor], neighbor))
                 logger.debug(f"Added to open_set: {neighbor}, f_score={f_score[neighbor]}")
 
