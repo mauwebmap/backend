@@ -65,10 +65,22 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         end_vertex = f"segment_{segment.id}_end"
         graph.add_vertex(start_vertex, {"coords": (segment.start_x, segment.start_y, seg_floor_number), "building_id": segment.building_id})
         graph.add_vertex(end_vertex, {"coords": (segment.end_x, segment.end_y, seg_floor_number), "building_id": segment.building_id})
-        weight = math.sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
-        graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
-        graph.add_edge(end_vertex, start_vertex, weight, {"type": "segment"})
-        logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
+        # Вместо полного ребра внутри здания добавляем фантом
+        if seg_floor_number > 0:  # Внутри здания
+            mid_x = (segment.start_x + segment.end_x) / 2
+            mid_y = (segment.start_y + segment.end_y) / 2
+            phantom_vertex = f"phantom_segment_{segment.id}_mid"
+            graph.add_vertex(phantom_vertex, {"coords": (mid_x, mid_y, seg_floor_number), "building_id": segment.building_id})
+            weight_start = math.sqrt((mid_x - segment.start_x) ** 2 + (mid_y - segment.start_y) ** 2)
+            weight_end = math.sqrt((mid_x - segment.end_x) ** 2 + (mid_y - segment.end_y) ** 2)
+            graph.add_edge(start_vertex, phantom_vertex, weight_start, {"type": "phantom"})
+            graph.add_edge(phantom_vertex, end_vertex, weight_end, {"type": "phantom"})
+            logger.info(f"Added phantom vertex: {phantom_vertex} -> ({mid_x}, {mid_y}, {seg_floor_number})")
+        else:  # Outdoor сегменты остаются полными
+            weight = math.sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
+            graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
+            graph.add_edge(end_vertex, start_vertex, weight, {"type": "segment"})
+            logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
         segments[segment.id] = (start_vertex, end_vertex)
 
     outdoor_segments = {}
@@ -105,13 +117,11 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_vertex(phantom_vertex, {"coords": (closest_x, closest_y, room_floor_number), "building_id": room.building_id})
                 weight_to_room = conn.weight or 2.0
                 graph.add_edge(room_vertex, phantom_vertex, weight_to_room, {"type": "phantom"})
-                graph.add_edge(phantom_vertex, room_vertex, weight_to_room, {"type": "phantom"})
                 graph.add_edge(phantom_vertex, segment_start, weight_to_room, {"type": "phantom"})
-                graph.add_edge(phantom_vertex, segment_end, weight_to_room, {"type": "phantom"})
                 logger.info(f"Added phantom vertex: {phantom_vertex} -> ({closest_x}, {closest_y}, {room_floor_number})")
 
     # Фантомные точки и переходы между сегментами
-    for conn in db.query(Connection).filter(Connection.type.in_(["улица", "дверь", "лестница"])).all():
+    for conn in db.query(Connection).all():
         if conn.from_segment_id and conn.to_segment_id and conn.from_segment_id in segments and conn.to_segment_id in segments:
             from_start, from_end = segments[conn.from_segment_id]
             to_start, to_end = segments[conn.to_segment_id]
@@ -129,31 +139,44 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_vertex(phantom_vertex, {"coords": (phantom_x, phantom_y, floor_number), "building_id": None})
                 weight_to_from = math.sqrt((phantom_x - from_coords[0]) ** 2 + (phantom_y - from_coords[1]) ** 2)
                 weight_to_to = math.sqrt((phantom_x - to_coords[0]) ** 2 + (phantom_y - to_coords[1]) ** 2)
-                graph.add_edge(from_end, phantom_vertex, weight_to_from + 1.0, {"type": "phantom"})  # +1 для приоритета
+                graph.add_edge(from_end, phantom_vertex, weight_to_from, {"type": "phantom"})
                 graph.add_edge(phantom_vertex, to_start, weight_to_to, {"type": "phantom"})
                 logger.info(f"Added phantom vertex: {phantom_vertex} -> ({phantom_x}, {phantom_y}, {floor_number})")
 
         elif conn.from_segment_id and conn.to_outdoor_id and conn.from_segment_id in segments and conn.to_outdoor_id in outdoor_segments:
             from_start, from_end = segments[conn.from_segment_id]
             to_start, to_end = outdoor_segments[conn.to_outdoor_id]
-            weight = conn.weight or 10.0
-            graph.add_edge(from_end, to_start, weight, {"type": conn.type})
-            graph.add_edge(to_end, from_start, weight, {"type": conn.type})
-            logger.info(f"Added edge ({conn.type}): {from_end} <-> {to_start}, weight={weight}")
+            # Полный переход через сегмент
+            mid_x = (graph.get_vertex_data(from_start)["coords"][0] + graph.get_vertex_data(from_end)["coords"][0]) / 2
+            mid_y = (graph.get_vertex_data(from_start)["coords"][1] + graph.get_vertex_data(from_end)["coords"][1]) / 2
+            phantom_from = f"phantom_segment_{conn.from_segment_id}_mid"
+            graph.add_vertex(phantom_from, {"coords": (mid_x, mid_y, floor_numbers[conn.from_segment_id]), "building_id": None})
+            weight_from_start = math.sqrt((mid_x - graph.get_vertex_data(from_start)["coords"][0]) ** 2 + (mid_y - graph.get_vertex_data(from_start)["coords"][1]) ** 2)
+            weight_from_end = math.sqrt((mid_x - graph.get_vertex_data(from_end)["coords"][0]) ** 2 + (mid_y - graph.get_vertex_data(from_end)["coords"][1]) ** 2)
+            graph.add_edge(from_start, phantom_from, weight_from_start, {"type": "phantom"})
+            graph.add_edge(phantom_from, from_end, weight_from_end, {"type": "phantom"})
+            weight_to_outdoor = conn.weight or 10.0
+            graph.add_edge(from_end, to_start, weight_to_outdoor, {"type": conn.type})
+            logger.info(f"Added full transition ({conn.type}): {from_end} -> {to_start}, weight={weight_to_outdoor}")
 
         elif conn.from_outdoor_id and conn.to_segment_id and conn.from_outdoor_id in outdoor_segments and conn.to_segment_id in segments:
             from_start, from_end = outdoor_segments[conn.from_outdoor_id]
             to_start, to_end = segments[conn.to_segment_id]
-            weight = conn.weight or 10.0
-            graph.add_edge(from_end, to_start, weight, {"type": conn.type})
-            graph.add_edge(to_end, from_start, weight, {"type": conn.type})
-            logger.info(f"Added edge ({conn.type}): {from_end} <-> {to_start}, weight={weight}")
+            mid_x = (graph.get_vertex_data(to_start)["coords"][0] + graph.get_vertex_data(to_end)["coords"][0]) / 2
+            mid_y = (graph.get_vertex_data(to_start)["coords"][1] + graph.get_vertex_data(to_end)["coords"][1]) / 2
+            phantom_to = f"phantom_segment_{conn.to_segment_id}_mid"
+            graph.add_vertex(phantom_to, {"coords": (mid_x, mid_y, floor_numbers[conn.to_segment_id]), "building_id": None})
+            weight_to_start = math.sqrt((mid_x - graph.get_vertex_data(to_start)["coords"][0]) ** 2 + (mid_y - graph.get_vertex_data(to_start)["coords"][1]) ** 2)
+            weight_to_end = math.sqrt((mid_x - graph.get_vertex_data(to_end)["coords"][0]) ** 2 + (mid_y - graph.get_vertex_data(to_end)["coords"][1]) ** 2)
+            graph.add_edge(to_start, phantom_to, weight_to_start, {"type": "phantom"})
+            graph.add_edge(phantom_to, to_end, weight_to_end, {"type": "phantom"})
+            weight_to_segment = conn.weight or 10.0
+            graph.add_edge(from_end, to_start, weight_to_segment, {"type": conn.type})
+            logger.info(f"Added full transition ({conn.type}): {from_end} -> {to_start}, weight={weight_to_segment}")
 
         elif conn.from_outdoor_id and conn.to_outdoor_id and conn.from_outdoor_id in outdoor_segments and conn.to_outdoor_id in outdoor_segments:
             from_start, from_end = outdoor_segments[conn.from_outdoor_id]
             to_start, to_end = outdoor_segments[conn.to_outdoor_id]
-            from_coords = graph.get_vertex_data(from_end)["coords"]
-            to_coords = graph.get_vertex_data(to_start)["coords"]
             dx = to_coords[0] - from_coords[0]
             dy = to_coords[1] - from_coords[1]
             dist = math.sqrt(dx ** 2 + dy ** 2)
@@ -165,21 +188,37 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_vertex(phantom_vertex, {"coords": (phantom_x, phantom_y, 1), "building_id": None})
                 weight_to_from = math.sqrt((phantom_x - from_coords[0]) ** 2 + (phantom_y - from_coords[1]) ** 2)
                 weight_to_to = math.sqrt((phantom_x - to_coords[0]) ** 2 + (phantom_y - to_coords[1]) ** 2)
-                graph.add_edge(from_end, phantom_vertex, weight_to_from + 1.0, {"type": "phantom"})
+                graph.add_edge(from_end, phantom_vertex, weight_to_from, {"type": "phantom"})
                 graph.add_edge(phantom_vertex, to_start, weight_to_to, {"type": "phantom"})
                 logger.info(f"Added phantom vertex: {phantom_vertex} -> ({phantom_x}, {phantom_y}, 1)")
 
-        # Лестницы между этажами
+        # Лестницы с фантомами на обоих концах
         if conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
             from_start, from_end = segments[conn.from_segment_id]
             to_start, to_end = segments[conn.to_segment_id]
             from_floor = floor_numbers[conn.from_segment_id]
             to_floor = floor_numbers[conn.to_segment_id]
             if from_floor != to_floor:
-                weight = conn.weight or 10.0
-                graph.add_edge(from_end, to_start, weight, {"type": "лестница"})
-                graph.add_edge(to_end, from_start, weight, {"type": "лестница"})
-                logger.info(f"Added stair edge: {from_end} <-> {to_start}, weight={weight}, floors {from_floor} -> {to_floor}")
+                # Фантом на исходном этаже
+                phantom_from_x = (graph.get_vertex_data(from_end)["coords"][0] + graph.get_vertex_data(to_start)["coords"][0]) / 2
+                phantom_from_y = (graph.get_vertex_data(from_end)["coords"][1] + graph.get_vertex_data(to_start)["coords"][1]) / 2
+                phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
+                graph.add_vertex(phantom_from, {"coords": (phantom_from_x, phantom_from_y, from_floor), "building_id": None})
+                weight_from = math.sqrt((phantom_from_x - graph.get_vertex_data(from_end)["coords"][0]) ** 2 + (phantom_from_y - graph.get_vertex_data(from_end)["coords"][1]) ** 2)
+                graph.add_edge(from_end, phantom_from, weight_from, {"type": "phantom"})
+
+                # Фантом на целевом этаже
+                phantom_to_x = phantom_from_x
+                phantom_to_y = phantom_from_y
+                phantom_to = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
+                graph.add_vertex(phantom_to, {"coords": (phantom_to_x, phantom_to_y, to_floor), "building_id": None})
+                weight_to = math.sqrt((phantom_to_x - graph.get_vertex_data(to_start)["coords"][0]) ** 2 + (phantom_to_y - graph.get_vertex_data(to_start)["coords"][1]) ** 2)
+                graph.add_edge(phantom_to, to_start, weight_to, {"type": "phantom"})
+
+                # Соединение лестницы
+                weight_stair = conn.weight or 10.0
+                graph.add_edge(phantom_from, phantom_to, weight_stair, {"type": "лестница"})
+                logger.info(f"Added stair transition: {phantom_from} -> {phantom_to}, weight={weight_stair}, floors {from_floor} -> {to_floor}")
 
     logger.info(f"Graph built successfully with {len(graph.vertices)} vertices")
     return graph
