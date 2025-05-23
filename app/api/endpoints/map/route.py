@@ -41,7 +41,7 @@ def generate_text_instructions(path: list, graph: Graph, db: Session) -> list:
     for i, vertex in enumerate(path):
         vertex_data = graph.get_vertex_data(vertex)
         coords = vertex_data["coords"]
-        floor_number = coords[2]  # Используем floor_number
+        floor_number = coords[2]
 
         if i == 0:
             vertex_name, _ = get_vertex_details(vertex, db)
@@ -88,7 +88,6 @@ def simplify_route(path: list, graph: Graph) -> list:
                     current_edge = edge_data
                     break
 
-            # Если это переход типа дверь-улица или улица-дверь, сохраняем обе точки
             if current_edge and current_edge["type"] in ["outdoor start", "outdoor end"]:
                 simplified.append(current)
                 simplified.append(next_vertex)
@@ -100,7 +99,34 @@ def simplify_route(path: list, graph: Graph) -> list:
             simplified.append(current)
         i += 1
 
-    return simplified
+    # Пересчитываем веса между оставшимися вершинами
+    final_path = []
+    for i in range(len(simplified) - 1):
+        start_vertex = simplified[i]
+        end_vertex = simplified[i + 1]
+        # Находим путь между start_vertex и end_vertex в оригинальном графе
+        subpath = []
+        for j in range(len(path)):
+            if path[j] == start_vertex:
+                subpath = [start_vertex]
+                for k in range(j + 1, len(path)):
+                    subpath.append(path[k])
+                    if path[k] == end_vertex:
+                        break
+                break
+
+        # Если это не соседние вершины, добавляем только start_vertex
+        if len(subpath) > 2:  # Есть промежуточные phantom-вершины
+            final_path.append(start_vertex)
+        else:
+            final_path.append(start_vertex)
+            if i == len(simplified) - 2:
+                final_path.append(end_vertex)
+
+    if not final_path or final_path[-1] != simplified[-1]:
+        final_path.append(simplified[-1])
+
+    return final_path
 
 @router.get("/route", response_model=dict)
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
@@ -119,9 +145,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     simplified_path = simplify_route(path, graph)
     logger.info(f"Simplified path: {simplified_path}")
 
-    # Проверяем количество соединений
-    original_connections = sum(1 for i in range(len(path) - 1) for neighbor, _, edge_data in graph.get_neighbors(path[i]) if neighbor == path[i + 1])
-    simplified_connections = sum(1 for i in range(len(simplified_path) - 1) for neighbor, _, edge_data in graph.get_neighbors(simplified_path[i]) if neighbor == simplified_path[i + 1])
+    # Проверяем количество соединений (просто считаем шаги)
+    original_connections = len(path) - 1
+    simplified_connections = len(simplified_path) - 1
     if original_connections != simplified_connections:
         logger.error(f"Connection count mismatch: original={original_connections}, simplified={simplified_connections}")
         raise HTTPException(status_code=500, detail="Ошибка: количество соединений не совпадает")
@@ -139,14 +165,14 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     for vertex in simplified_path:
         vertex_data = graph.get_vertex_data(vertex)
         coords = vertex_data["coords"]
-        floor_number = coords[2]  # Используем floor_number
+        floor_number = coords[2]
 
         point = {"x": coords[0], "y": coords[1], "vertex": vertex, "floor": floor_number}
 
         if current_floor is None:
             current_floor = floor_number
             floor_points.append(point)
-        elif floor_number != current_floor:  # Исправлено с floor_id на floor_number
+        elif floor_number != current_floor:
             if floor_points:
                 route.append({"floor": current_floor, "points": floor_points})
             floor_points = [point]
