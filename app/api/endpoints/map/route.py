@@ -35,7 +35,7 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
         return base_direction
 
     prev_dx = prev_coords[0] - prev_prev_coords[0]
-    prev_dy = prev_coords[1] - prev_prev_coords[1]
+    prev_dy = prev_coords[1] - prev_prev_coords[0]
     if prev_dx == 0 and prev_dy == 0:
         return base_direction
 
@@ -77,16 +77,21 @@ def generate_text_instructions(path: list, graph: Graph, db: Session, view_floor
         coords = vertex_data["coords"]
         floor_id = coords[2]
         building_id = vertex_data["building_id"]
-        try:
-            floor = db.query(Floor).filter(Floor.id == floor_id).first()
-            if floor:
-                floor_number = floor.floor_number if building_id is not None else 1
-            else:
-                logger.warning(f"Floor with id {floor_id} not found, assuming floor_id as floor number")
+
+        # Outdoor-сегменты всегда на 1-м этаже
+        if vertex.startswith("outdoor_"):
+            floor_number = 1
+        else:
+            try:
+                floor = db.query(Floor).filter(Floor.id == floor_id).first()
+                if floor:
+                    floor_number = floor.floor_number if building_id is not None else 1
+                else:
+                    logger.warning(f"Floor with id {floor_id} not found, assuming floor_id as floor number")
+                    floor_number = floor_id if building_id is not None else 1
+            except Exception as e:
+                logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
                 floor_number = floor_id if building_id is not None else 1
-        except Exception as e:
-            logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
-            floor_number = floor_id if building_id is not None else 1
 
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}, building_id={building_id}")
 
@@ -150,8 +155,13 @@ def simplify_route(points: list) -> list:
         return points
     simplified = [points[0]]
     for i in range(1, len(points)):
-        if points[i]["vertex"] != simplified[-1]["vertex"]:  # Удаляем только дубликаты
-            simplified.append(points[i])
+        curr = points[i]
+        prev = simplified[-1]
+        curr_coords = (curr["x"], curr["y"])
+        prev_coords = (prev["x"], prev["y"])
+        # Удаляем дубликаты по координатам, но сохраняем ключевые точки (например, segment start/end)
+        if curr_coords != prev_coords or curr["vertex"].startswith("segment_") or prev["vertex"].startswith("segment_"):
+            simplified.append(curr)
     return simplified
 
 @router.get("/route", response_model=dict)
@@ -185,16 +195,21 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
         coords = vertex_data["coords"]
         floor_id = coords[2]
         building_id = vertex_data["building_id"]
-        try:
-            floor = db.query(Floor).filter(Floor.id == floor_id).first()
-            if floor:
-                floor_number = floor.floor_number if building_id is not None else 1
-            else:
-                logger.warning(f"Floor with id {floor_id} not found, assuming floor_id as floor number")
+
+        # Outdoor-сегменты всегда на 1-м этаже
+        if vertex.startswith("outdoor_"):
+            floor_number = 1
+        else:
+            try:
+                floor = db.query(Floor).filter(Floor.id == floor_id).first()
+                if floor:
+                    floor_number = floor.floor_number if building_id is not None else 1
+                else:
+                    logger.warning(f"Floor with id {floor_id} not found, assuming floor_id as floor number")
+                    floor_number = floor_id if building_id is not None else 1
+            except Exception as e:
+                logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
                 floor_number = floor_id if building_id is not None else 1
-        except Exception as e:
-            logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
-            floor_number = floor_id if building_id is not None else 1
 
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}, building_id={building_id}")
 
@@ -208,7 +223,6 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
             curr_is_segment = vertex.startswith("segment_")
 
             if (prev_is_segment and curr_is_outdoor) or (prev_is_outdoor and curr_is_segment):
-                # Добавляем недостающие start/end вершины сегмента или outdoor
                 if prev_is_segment:
                     seg_id = int(prev_vertex.split("_")[1])
                     start_vertex = f"segment_{seg_id}_start"
