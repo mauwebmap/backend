@@ -70,9 +70,16 @@ def find_path(db, start: str, end: str, return_graph=False):
         current_coords = current_data["coords"]
         current_building = current_data["building_id"]
 
-        for neighbor, weight, _ in graph.get_neighbors(current):
+        for neighbor, weight, edge_data in graph.get_neighbors(current):
             neighbor_data = graph.get_vertex_data(neighbor)
-            tentative_g_score = g_score[current] + weight
+            # Штраф за большие веса (например, outdoor_1_end с весом 876.43)
+            weight_penalty = 200.0 if weight > 500 else 0.0
+            # Штраф за прохождение через комнаты, если это не конечная цель
+            room_penalty = 100.0 if neighbor.startswith("room_") and neighbor != end else 0.0
+            # Предпочтение сегментам
+            segment_bonus = -10.0 if neighbor.startswith("segment_") else 0.0
+            tentative_g_score = g_score[current] + weight + weight_penalty + room_penalty + segment_bonus
+
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score

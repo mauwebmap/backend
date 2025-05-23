@@ -8,7 +8,6 @@ from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
 from app.map.models.outdoor_segment import OutdoorSegment
-from app.map.models.floor import Floor
 from app.map.models.connection import Connection
 from math import atan2, degrees, sqrt
 import logging
@@ -82,16 +81,8 @@ def generate_text_instructions(path: list, graph: Graph, db: Session, view_floor
         if vertex.startswith("outdoor_"):
             floor_number = 1
         else:
-            try:
-                floor = db.query(Floor).filter(Floor.id == floor_id).first()
-                if floor:
-                    floor_number = floor.floor_number if building_id is not None else 1
-                else:
-                    logger.warning(f"Floor with id {floor_id} not found, assuming floor_id as floor number")
-                    floor_number = floor_id if building_id is not None else 1
-            except Exception as e:
-                logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
-                floor_number = floor_id if building_id is not None else 1
+            # Для комнат и сегментов используем floor_id напрямую
+            floor_number = floor_id
 
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}, building_id={building_id}")
 
@@ -115,6 +106,8 @@ def generate_text_instructions(path: list, graph: Graph, db: Session, view_floor
                 instructions.append("Выйдите из здания на улицу")
             elif prev_floor == 1 and floor_number != 1:
                 instructions.append(f"Войдите в здание и поднимитесь на {floor_number}-й этаж")
+            elif prev_floor != 1 and floor_number != 1:
+                instructions.append(f"Поднимитесь на {floor_number}-й этаж")
             prev_prev_coords = None
             last_turn = None
 
@@ -200,16 +193,8 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
         if vertex.startswith("outdoor_"):
             floor_number = 1
         else:
-            try:
-                floor = db.query(Floor).filter(Floor.id == floor_id).first()
-                if floor:
-                    floor_number = floor.floor_number if building_id is not None else 1
-                else:
-                    logger.warning(f"Floor with id {floor_id} not found, assuming floor_id as floor number")
-                    floor_number = floor_id if building_id is not None else 1
-            except Exception as e:
-                logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
-                floor_number = floor_id if building_id is not None else 1
+            # Для комнат и сегментов используем floor_id напрямую
+            floor_number = floor_id
 
         logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}, building_id={building_id}")
 

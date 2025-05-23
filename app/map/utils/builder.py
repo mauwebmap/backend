@@ -7,6 +7,7 @@ from app.map.models.connection import Connection
 from sqlalchemy.orm import Session
 import logging
 import math
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     logger.info(f"Relevant floor IDs: {floor_ids}")
 
     # Добавляем сегменты и phantom-вершины для всех комнат на соответствующих этажах
+    segments_by_floor = defaultdict(list)  # Для хранения сегментов по этажам
     for segment in db.query(Segment).filter(Segment.building_id.in_(building_ids)).all():
         start_vertex = f"segment_{segment.id}_start"
         end_vertex = f"segment_{segment.id}_end"
@@ -57,9 +59,33 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             dist_start = math.sqrt((room.cab_x - segment.start_x) ** 2 + (room.cab_y - segment.start_y) ** 2)
             dist_end = math.sqrt((room.cab_x - segment.end_x) ** 2 + (room.cab_y - segment.end_y) ** 2)
             graph.add_edge(room_vertex, phantom_vertex, min(dist_start, dist_end), {"type": "phantom"})
-            graph.add_edge(phantom_vertex, start_vertex, dist_start, {"type": 'phantom'})
-            graph.add_edge(phantom_vertex, end_vertex, dist_end, {"type": 'phantom'})
+            graph.add_edge(phantom_vertex, start_vertex, dist_start, {"type": "phantom"})
+            graph.add_edge(phantom_vertex, end_vertex, dist_end, {"type": "phantom"})
             logger.info(f"Added phantom vertex: {phantom_vertex} -> ({room.cab_x}, {room.cab_y}, {room.floor_id})")
+
+        # Сохраняем сегменты для соединения
+        segments_by_floor[(segment.floor_id, segment.building_id)].append((segment.id, start_vertex, end_vertex))
+
+    # Универсальное соединение сегментов на одном этаже
+    for (floor_id, building_id), segments in segments_by_floor.items():
+        # Проверяем, есть ли явные соединения через таблицу connections
+        existing_connections = set()
+        for conn in db.query(Connection).filter(Connection.type == "лестница").all():
+            if conn.from_segment_id and conn.to_segment_id:
+                existing_connections.add((conn.from_segment_id, conn.to_segment_id))
+
+        # Соединяем сегменты, если между ними нет явного соединения
+        for i, (seg_id1, start1, end1) in enumerate(segments):
+            for j, (seg_id2, start2, end2) in enumerate(segments):
+                if i != j and (seg_id1, seg_id2) not in existing_connections:
+                    # Вычисляем расстояние между концом одного сегмента и началом другого
+                    end1_coords = graph.get_vertex_data(end1)["coords"]
+                    start2_coords = graph.get_vertex_data(start2)["coords"]
+                    weight = math.sqrt((end1_coords[0] - start2_coords[0]) ** 2 + (end1_coords[1] - start2_coords[1]) ** 2)
+                    # Добавляем ребро, если расстояние разумное (например, меньше 100)
+                    if weight < 100:
+                        graph.add_edge(end1, start2, weight, {"type": "corridor"})
+                        logger.info(f"Added universal corridor edge: {end1} <-> {start2}, weight={weight}")
 
     # Добавляем outdoor-сегменты (всегда floor_id=1)
     for outdoor in db.query(OutdoorSegment).all():
