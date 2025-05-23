@@ -61,7 +61,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_edge(phantom_vertex, end_vertex, dist_end, {"type": 'phantom'})
             logger.info(f"Added phantom vertex: {phantom_vertex} -> ({room.cab_x}, {room.cab_y}, {room.floor_id})")
 
-    # Добавляем outdoor-сегменты
+    # Добавляем outdoor-сегменты (всегда floor_id=1)
     for outdoor in db.query(OutdoorSegment).all():
         start_vertex = f"outdoor_{outdoor.id}_start"
         end_vertex = f"outdoor_{outdoor.id}_end"
