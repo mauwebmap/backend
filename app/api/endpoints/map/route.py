@@ -2,8 +2,6 @@
 from app.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-
-from app.map.utils.graph import Graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
@@ -99,34 +97,7 @@ def simplify_route(path: list, graph: Graph) -> list:
             simplified.append(current)
         i += 1
 
-    # Пересчитываем веса между оставшимися вершинами
-    final_path = []
-    for i in range(len(simplified) - 1):
-        start_vertex = simplified[i]
-        end_vertex = simplified[i + 1]
-        # Находим путь между start_vertex и end_vertex в оригинальном графе
-        subpath = []
-        for j in range(len(path)):
-            if path[j] == start_vertex:
-                subpath = [start_vertex]
-                for k in range(j + 1, len(path)):
-                    subpath.append(path[k])
-                    if path[k] == end_vertex:
-                        break
-                break
-
-        # Если это не соседние вершины, добавляем только start_vertex
-        if len(subpath) > 2:  # Есть промежуточные phantom-вершины
-            final_path.append(start_vertex)
-        else:
-            final_path.append(start_vertex)
-            if i == len(simplified) - 2:
-                final_path.append(end_vertex)
-
-    if not final_path or final_path[-1] != simplified[-1]:
-        final_path.append(simplified[-1])
-
-    return final_path
+    return simplified  # Убираем лишнюю логику пересчёта, так как phantom-точки уже учтены
 
 @router.get("/route", response_model=dict)
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
@@ -145,12 +116,10 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     simplified_path = simplify_route(path, graph)
     logger.info(f"Simplified path: {simplified_path}")
 
-    # Проверяем количество соединений (просто считаем шаги)
-    original_connections = len(path) - 1
-    simplified_connections = len(simplified_path) - 1
-    if original_connections != simplified_connections:
-        logger.error(f"Connection count mismatch: original={original_connections}, simplified={simplified_connections}")
-        raise HTTPException(status_code=500, detail="Ошибка: количество соединений не совпадает")
+    # Убираем строгую проверку соединений, так как phantom-точки меняют количество
+    # logger.error(f"Connection count mismatch: original={original_connections}, simplified={simplified_connections}")
+    # if original_connections != simplified_connections:
+    #     raise HTTPException(status_code=500, detail="Ошибка: количество соединений не совпадает")
 
     try:
         instructions = generate_text_instructions(simplified_path, graph, db)
