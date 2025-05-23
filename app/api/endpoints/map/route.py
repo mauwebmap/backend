@@ -2,6 +2,8 @@
 from app.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.map.utils.graph import Graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
