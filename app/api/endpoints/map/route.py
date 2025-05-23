@@ -25,37 +25,18 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     current_floor = None
     floor_points = []
 
-    for i, vertex in enumerate(path):
+    for vertex in path:
         vertex_data = graph.get_vertex_data(vertex)
         floor = vertex_data["coords"][2]
         x, y = vertex_data["coords"][0], vertex_data["coords"][1]
 
-        # Определяем тип перехода
-        transition_type = None
-        if i > 0:
-            prev_vertex = path[i - 1]
-            edge_data = graph.get_edge_data(prev_vertex, vertex)
-            transition_type = edge_data["type"] if edge_data else None
+        if floor != current_floor:
+            if floor_points:
+                result.append({"floor": current_floor, "points": floor_points})
+            floor_points = []
+            current_floor = floor
 
-        # Включаем все точки, кроме "середины" сегментов, если они не являются частью перехода "улица-дверь"
-        include_point = True
-        if vertex.startswith("segment_") and "_start" in vertex and transition_type not in ["улица", "дверь", "лестница"]:
-            include_point = False  # Пропускаем segment_start, если это не переход
-        elif vertex.startswith("segment_") and "_end" in vertex and i < len(path) - 1:
-            next_vertex = path[i + 1]
-            next_edge_data = graph.get_edge_data(vertex, next_vertex)
-            next_transition_type = next_edge_data["type"] if next_edge_data else None
-            if next_transition_type not in ["улица", "дверь", "лестница"]:
-                include_point = False  # Пропускаем segment_end, если это не переход
-
-        if include_point:
-            if floor != current_floor:
-                if floor_points:
-                    result.append({"floor": current_floor, "points": floor_points})
-                floor_points = []
-                current_floor = floor
-
-            floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
+        floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
 
     if floor_points:
         result.append({"floor": current_floor, "points": floor_points})

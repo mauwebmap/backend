@@ -81,8 +81,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     for outdoor in db.query(OutdoorSegment).all():
         start_vertex = f"outdoor_{outdoor.id}_start"
         end_vertex = f"outdoor_{outdoor.id}_end"
-        graph.add_vertex(start_vertex, {"coords": (outdoor.start_x, outdoor.start_y, 1), "building_id": None})
-        graph.add_vertex(end_vertex, {"coords": (outdoor.end_x, outdoor.end_y, 1), "building_id": None})
+        coords_start = (outdoor.start_x, outdoor.start_y, 1)
+        coords_end = (outdoor.end_x, outdoor.end_y, 1)
+        graph.add_vertex(start_vertex, {"coords": coords_start, "building_id": None})
+        graph.add_vertex(end_vertex, {"coords": coords_end, "building_id": None})
         weight = math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
         graph.add_edge(end_vertex, start_vertex, weight, {"type": "outdoor"})
