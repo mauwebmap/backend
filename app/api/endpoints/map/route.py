@@ -1,6 +1,7 @@
 from app.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from app.map.utils.graph import Graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
@@ -8,10 +9,7 @@ from app.map.models.outdoor_segment import OutdoorSegment
 from app.map.models.floor import Floor
 from app.map.models.connection import Connection
 from math import atan2, degrees, sqrt
-from app.map.utils.graph import Graph
 import logging
-
-
 
 logger = logging.getLogger(__name__)
 
