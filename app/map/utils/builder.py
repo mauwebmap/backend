@@ -44,7 +44,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         end_vertex = f"segment_{segment.id}_end"
         graph.add_vertex(start_vertex, {"coords": (segment.start_x, segment.start_y, segment.floor_id), "building_id": segment.building_id})
         graph.add_vertex(end_vertex, {"coords": (segment.end_x, segment.end_y, segment.floor_id), "building_id": segment.building_id})
-        weight = math.sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
+        weight = math.sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)  # Вес из разницы координат
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
@@ -63,7 +63,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
 
         segments_by_floor[(segment.floor_id, segment.building_id)].append((segment.id, start_vertex, end_vertex))
 
-    # Универсальное соединение сегментов на одном этаже с ограничением
+    # Универсальное соединение сегментов на одном этаже (строго по базе)
     for (floor_id, building_id), segments in segments_by_floor.items():
         existing_connections = {(conn.from_segment_id, conn.to_segment_id) for conn in db.query(Connection).filter(Connection.type == "лестница").all() if conn.from_segment_id and conn.to_segment_id}
         for i, (seg_id1, start1, end1) in enumerate(segments):
@@ -82,27 +82,30 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         end_vertex = f"outdoor_{outdoor.id}_end"
         graph.add_vertex(start_vertex, {"coords": (outdoor.start_x, outdoor.start_y, 1), "building_id": None})
         graph.add_vertex(end_vertex, {"coords": (outdoor.end_x, outdoor.end_y, 1), "building_id": None})
-        weight = math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2)
+        weight = math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2)  # Вес из разницы координат
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
-    # Соединения
+    # Соединения строго по базе
     for conn in db.query(Connection).filter(Connection.type.in_(["улица", "дверь", "лестница"])).all():
         if conn.from_segment_id and conn.to_outdoor_id:
             seg_vertex = f"segment_{conn.from_segment_id}_end"
             out_vertex = f"outdoor_{conn.to_outdoor_id}_start"
             if seg_vertex in graph.vertices and out_vertex in graph.vertices:
                 graph.add_edge(seg_vertex, out_vertex, conn.weight or 2.0, {"type": "outdoor start"})
+                logger.info(f"Added edge (outdoor start): {seg_vertex} <-> {out_vertex}, weight={conn.weight or 2.0}")
         if conn.from_outdoor_id and conn.to_segment_id:
             out_vertex = f"outdoor_{conn.from_outdoor_id}_end"
             seg_vertex = f"segment_{conn.to_segment_id}_start"
             if out_vertex in graph.vertices and seg_vertex in graph.vertices:
                 graph.add_edge(out_vertex, seg_vertex, conn.weight or 2.0, {"type": "outdoor end"})
+                logger.info(f"Added edge (outdoor end): {out_vertex} <-> {seg_vertex}, weight={conn.weight or 2.0}")
         if conn.from_segment_id and conn.to_segment_id:
             from_vertex = f"segment_{conn.from_segment_id}_end"
             to_vertex = f"segment_{conn.to_segment_id}_start"
             if from_vertex in graph.vertices and to_vertex in graph.vertices:
                 graph.add_edge(from_vertex, to_vertex, conn.weight or 2.0, {"type": "ladder"})
+                logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={conn.weight or 2.0}")
 
     logger.info(f"Graph built successfully with {len(graph.vertices)} vertices")
     return graph

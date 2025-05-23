@@ -71,17 +71,17 @@ def generate_text_instructions(path: list, graph: Graph, db: Session) -> list:
 
     return instructions
 
-def simplify_route(points: list) -> list:
-    if len(points) < 2:
-        return points
-    simplified = [points[0]]
-    for i in range(1, len(points) - 1):
-        curr = points[i]
-        next_point = points[i + 1]
-        # Сохраняем только ключевые точки (начало/конец сегментов или смена этажа)
-        if curr["vertex"].startswith("segment_") or next_point["vertex"].startswith("segment_") or curr["floor"] != next_point["floor"]:
-            simplified.append(curr)
-    simplified.append(points[-1])  # Добавляем конечную точку
+def simplify_route(path: list, graph: Graph) -> list:
+    if len(path) < 2:
+        return path
+
+    simplified = [path[0]]  # Начинаем с первой вершины
+    for i in range(1, len(path) - 1):
+        vertex = path[i]
+        # Пропускаем phantom-вершины, оставляем только room, segment и outdoor
+        if not vertex.startswith("phantom_"):
+            simplified.append(vertex)
+    simplified.append(path[-1])  # Добавляем последнюю вершину
     return simplified
 
 @router.get("/route", response_model=dict)
@@ -97,8 +97,12 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     if not path:
         raise HTTPException(status_code=404, detail="Маршрут не найден")
 
+    # Упрощаем маршрут, убирая phantom-вершины
+    simplified_path = simplify_route(path, graph)
+    logger.info(f"Simplified path: {simplified_path}")
+
     try:
-        instructions = generate_text_instructions(path, graph, db)
+        instructions = generate_text_instructions(simplified_path, graph, db)
     except Exception as e:
         logger.error(f"Error generating instructions: {e}")
         raise HTTPException(status_code=500, detail=f"Ошибка при генерации инструкций: {e}")
@@ -107,7 +111,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     current_floor = None
     floor_points = []
 
-    for vertex in path:
+    for vertex in simplified_path:
         vertex_data = graph.get_vertex_data(vertex)
         coords = vertex_data["coords"]
         floor_id = 1 if vertex.startswith("outdoor_") else coords[2]
@@ -118,13 +122,13 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             floor_points.append(point)
         elif floor_id != current_floor:
             if floor_points:
-                route.append({"floor": current_floor, "points": simplify_route(floor_points)})
+                route.append({"floor": current_floor, "points": floor_points})
             floor_points = [point]
             current_floor = floor_id
         else:
             floor_points.append(point)
 
     if floor_points:
-        route.append({"floor": current_floor, "points": simplify_route(floor_points)})
+        route.append({"floor": current_floor, "points": floor_points})
 
     return {"path": route, "weight": weight, "instructions": instructions}
