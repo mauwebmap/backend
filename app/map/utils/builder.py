@@ -19,14 +19,17 @@ def find_closest_point_on_segment(room_x: float, room_y: float, start_x: float, 
     seg_len_sq = seg_dx ** 2 + seg_dy ** 2
 
     if seg_len_sq == 0:
+        logger.warning(f"Segment length is zero for start ({start_x}, {start_y}) to end ({end_x}, {end_y})")
         return start_x, start_y
 
     dx = room_x - start_x
     dy = room_y - start_y
     t = max(0, min(1, (dx * seg_dx + dy * seg_dy) / seg_len_sq))
+    logger.debug(f"Calculated t={t} for room ({room_x}, {room_y}) on segment ({start_x}, {start_y}) to ({end_x}, {end_y})")
 
     closest_x = start_x + t * seg_dx
     closest_y = start_y + t * seg_dy
+    logger.debug(f"Closest point: ({closest_x}, {closest_y})")
     return closest_x, closest_y
 
 def build_graph(db: Session, start: str, end: str) -> Graph:
@@ -49,13 +52,13 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     start_floor = db.query(Floor).filter(Floor.id == start_room.floor_id).first()
     end_floor = db.query(Floor).filter(Floor.id == end_room.floor_id).first()
     if not start_floor or not end_floor:
-        # Если floor_number не удалось извлечь, используем floor_id как заглушку
         logger.warning(f"Floor data missing for floor_id {start_room.floor_id} or {end_room.floor_id}, using floor_id as floor_number")
-        start_floor_number = start_room.floor_id  # Заглушка
-        end_floor_number = end_room.floor_id      # Заглушка
+        start_floor_number = start_room.floor_id
+        end_floor_number = end_room.floor_id
     else:
         start_floor_number = start_floor.floor_number
         end_floor_number = end_floor.floor_number
+    logger.info(f"Assigned floor_number: room_{start_id}={start_floor_number}, room_{end_id}={end_floor_number}")
 
     # Добавляем вершины для начальной и конечной комнаты
     graph.add_vertex(start, {"coords": (start_room.cab_x, start_room.cab_y, start_floor_number), "building_id": start_room.building_id})
@@ -73,9 +76,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         seg_floor = db.query(Floor).filter(Floor.id == segment.floor_id).first()
         if not seg_floor:
             logger.warning(f"Floor data missing for segment floor_id {segment.floor_id}, using floor_id as floor_number")
-            seg_floor_number = segment.floor_id  # Заглушка
+            seg_floor_number = segment.floor_id
         else:
             seg_floor_number = seg_floor.floor_number
+        logger.info(f"Segment {segment.id} assigned floor_number: {seg_floor_number}")
 
         start_vertex = f"segment_{segment.id}_start"
         end_vertex = f"segment_{segment.id}_end"
@@ -88,7 +92,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         # Phantom-вершины для start и end с ближайшей точкой на сегменте
         for room_id, room in [(start_id, start_room), (end_id, end_room)]:
             room_floor = db.query(Floor).filter(Floor.id == room.floor_id).first()
-            room_floor_number = room.floor_id if not room_floor else room_floor.floor_number  # Заглушка
+            room_floor_number = room.floor_id if not room_floor else room_floor.floor_number
             if room_floor_number == seg_floor_number and room.building_id == segment.building_id:
                 room_vertex = f"room_{room_id}"
                 phantom_vertex = f"phantom_room_{room_id}_segment_{segment.id}"
@@ -133,7 +137,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         end_vertex = f"outdoor_{outdoor.id}_end"
         graph.add_vertex(start_vertex, {"coords": (outdoor.start_x, outdoor.start_y, 1), "building_id": None})
         graph.add_vertex(end_vertex, {"coords": (outdoor.end_x, outdoor.end_y, 1), "building_id": None})
-        weight = math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2)
+        weight = math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoore.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 

@@ -2,8 +2,6 @@
 from app.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-
-from app.map.utils.graph import Graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
@@ -24,7 +22,7 @@ def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tupl
 
     curr_angle = degrees(atan2(curr_dy, curr_dx))
     curr_angle = ((curr_angle + 180) % 360) - 180
-    return "направо" if -45 <= curr_angle <= 45 else "вперёд" if 45 < curr_angle <= 135 else "налево"
+    return "направо" if -45 <= curr_angle <= 45 else "вперёд" if 45 < curr_angle <= 135 else "налево" if -135 <= curr_angle < -45 else "направо"  # Исправлено для точности
 
 def get_vertex_details(vertex: str, db: Session) -> tuple:
     vertex_type, vertex_id = vertex.split("_", 1)
@@ -59,11 +57,12 @@ def generate_text_instructions(path: list, graph: Graph, db: Session) -> list:
                 instructions.append(f"Поднимитесь на {floor_number}-й этаж")
             prev_floor = floor_number
 
-        if prev_coords:
+        if prev_coords and i < len(path) - 1:  # Проверяем только для промежуточных точек
             direction = get_direction(None, prev_coords, coords[:2])
-            if direction != "вперёд" or i == len(path) - 1:
-                vertex_name, vertex_number = get_vertex_details(vertex, db)
-                destination = f"{vertex_name} номер {vertex_number}" if vertex_number else vertex_name
+            next_vertex = path[i + 1]
+            next_vertex_name, next_vertex_number = get_vertex_details(next_vertex, db)
+            destination = f"{next_vertex_name} номер {next_vertex_number}" if next_vertex_number else next_vertex_name
+            if direction != "вперёд" or i == len(path) - 2:
                 instructions.append(f"{direction} до {destination}")
 
         prev_coords = coords[:2]
@@ -94,12 +93,11 @@ def simplify_route(path: list, graph: Graph) -> list:
                 i += 2
                 continue
 
-        # Пропускаем phantom-вершины, если это не часть перехода
-        if not current.startswith("phantom_"):
-            simplified.append(current)
+        # Сохраняем все вершины, включая phantom, если они важны
+        simplified.append(current)
         i += 1
 
-    return simplified  # Убираем лишнюю логику пересчёта, так как phantom-точки уже учтены
+    return simplified
 
 @router.get("/route", response_model=dict)
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
@@ -114,14 +112,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     if not path:
         raise HTTPException(status_code=404, detail="Маршрут не найден")
 
-    # Упрощаем маршрут, сохраняя переходы дверь-улица
+    # Упрощаем маршрут, сохраняя переходы дверь-улица и phantom-точки
     simplified_path = simplify_route(path, graph)
     logger.info(f"Simplified path: {simplified_path}")
-
-    # Убираем строгую проверку соединений, так как phantom-точки меняют количество
-    # logger.error(f"Connection count mismatch: original={original_connections}, simplified={simplified_connections}")
-    # if original_connections != simplified_connections:
-    #     raise HTTPException(status_code=500, detail="Ошибка: количество соединений не совпадает")
 
     try:
         instructions = generate_text_instructions(simplified_path, graph, db)
