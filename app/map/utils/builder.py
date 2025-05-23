@@ -14,11 +14,17 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     logger.info(f"Starting to build graph for start={start}, end={end}")
     graph = Graph()
 
-    # Извлекаем комнаты
-    start_room = db.query(Room).filter(Room.name == start).first()
-    end_room = db.query(Room).filter(Room.name == end).first()
-    if not start_room or not end_room:
-        raise ValueError(f"Room {start} or {end} not found")
+    # Извлекаем комнаты по ID (предполагаем, что start и end — это room_<id>)
+    try:
+        start_id = int(start.replace("room_", ""))
+        end_id = int(end.replace("room_", ""))
+        start_room = db.query(Room).filter(Room.id == start_id).first()
+        end_room = db.query(Room).filter(Room.id == end_id).first()
+        if not start_room or not end_room:
+            raise ValueError(f"Room with id {start_id} or {end_id} not found")
+    except ValueError as e:
+        logger.error(f"Failed to parse room IDs from {start} or {end}: {e}")
+        raise ValueError(f"Invalid room format, expected room_<id>, got {start} or {end}")
 
     # Добавляем вершины комнат
     graph.add_vertex(start, {"coords": (start_room.cab_x, start_room.cab_y, start_room.floor_id), "building_id": start_room.building_id})

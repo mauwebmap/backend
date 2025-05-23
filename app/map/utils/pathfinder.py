@@ -21,6 +21,7 @@ def find_path(db, start: str, end: str, return_graph=False):
         logger.info(f"Graph built with {len(graph.vertices)} vertices")
     except Exception as e:
         logger.error(f"Failed to build graph: {e}")
+        graph = Graph()  # Возвращаем пустой граф в случае ошибки
         return [], float('inf'), graph if return_graph else []
 
     if start not in graph.vertices or end not in graph.vertices:
@@ -88,7 +89,7 @@ def find_path(db, start: str, end: str, return_graph=False):
             if start_building == end_building and start_building is not None:
                 route = [segment for segment in route if not any("outdoor" in p["vertex"] for p in segment["points"])]
 
-            logger.info(f"Generated route structure: {route}")  # Добавляем отладочный лог
+            logger.info(f"Generated route structure: {route}")
             logger.info(f"Pathfinding completed: path={path}, weight={weight}")
             return path, weight, graph if return_graph else route
 
