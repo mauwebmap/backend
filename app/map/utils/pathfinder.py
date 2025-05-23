@@ -8,10 +8,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 def heuristic(current: tuple, goal: tuple, current_building: int, goal_building: int) -> float:
-    x1, y1, floor_id1 = current
-    x2, y2, floor_id2 = goal
+    x1, y1, floor_number1 = current
+    x2, y2, floor_number2 = goal
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-    floor_penalty = abs(floor_id1 - floor_id2) * 10.0  # Минимальный учёт этажей
+    floor_penalty = abs(floor_number1 - floor_number2) * 10.0
     return distance + floor_penalty
 
 def find_path(db, start: str, end: str, return_graph=False, max_iterations=5000):
@@ -67,7 +67,7 @@ def find_path(db, start: str, end: str, return_graph=False, max_iterations=5000)
 
         for neighbor, weight, edge_data in graph.get_neighbors(current):
             logger.info(f"Considering neighbor: {neighbor}, weight={weight}, edge_type={edge_data['type']}")
-            tentative_g_score = g_score[current] + weight  # Только вес из графа, без изменений
+            tentative_g_score = g_score[current] + weight
 
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current

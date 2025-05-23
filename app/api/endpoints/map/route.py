@@ -41,8 +41,7 @@ def generate_text_instructions(path: list, graph: Graph, db: Session) -> list:
     for i, vertex in enumerate(path):
         vertex_data = graph.get_vertex_data(vertex)
         coords = vertex_data["coords"]
-        floor_id = coords[2]
-        floor_number = 1 if vertex.startswith("outdoor_") else floor_id
+        floor_number = coords[2]  # Используем floor_number
 
         if i == 0:
             vertex_name, _ = get_vertex_details(vertex, db)
@@ -75,13 +74,32 @@ def simplify_route(path: list, graph: Graph) -> list:
     if len(path) < 2:
         return path
 
-    simplified = [path[0]]  # Начинаем с первой вершины
-    for i in range(1, len(path) - 1):
-        vertex = path[i]
-        # Пропускаем phantom-вершины, оставляем только room, segment и outdoor
-        if not vertex.startswith("phantom_"):
-            simplified.append(vertex)
-    simplified.append(path[-1])  # Добавляем последнюю вершину
+    simplified = []
+    i = 0
+    while i < len(path):
+        current = path[i]
+
+        # Проверяем последовательные переходы (дверь-улица или улица-дверь)
+        if i < len(path) - 1:
+            next_vertex = path[i + 1]
+            current_edge = None
+            for neighbor, _, edge_data in graph.get_neighbors(current):
+                if neighbor == next_vertex:
+                    current_edge = edge_data
+                    break
+
+            # Если это переход типа дверь-улица или улица-дверь, сохраняем обе точки
+            if current_edge and current_edge["type"] in ["outdoor start", "outdoor end"]:
+                simplified.append(current)
+                simplified.append(next_vertex)
+                i += 2
+                continue
+
+        # Пропускаем phantom-вершины, если это не часть перехода
+        if not current.startswith("phantom_"):
+            simplified.append(current)
+        i += 1
+
     return simplified
 
 @router.get("/route", response_model=dict)
@@ -97,9 +115,16 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     if not path:
         raise HTTPException(status_code=404, detail="Маршрут не найден")
 
-    # Упрощаем маршрут, убирая phantom-вершины
+    # Упрощаем маршрут, сохраняя переходы дверь-улица
     simplified_path = simplify_route(path, graph)
     logger.info(f"Simplified path: {simplified_path}")
+
+    # Проверяем количество соединений
+    original_connections = sum(1 for i in range(len(path) - 1) for neighbor, _, edge_data in graph.get_neighbors(path[i]) if neighbor == path[i + 1])
+    simplified_connections = sum(1 for i in range(len(simplified_path) - 1) for neighbor, _, edge_data in graph.get_neighbors(simplified_path[i]) if neighbor == simplified_path[i + 1])
+    if original_connections != simplified_connections:
+        logger.error(f"Connection count mismatch: original={original_connections}, simplified={simplified_connections}")
+        raise HTTPException(status_code=500, detail="Ошибка: количество соединений не совпадает")
 
     try:
         instructions = generate_text_instructions(simplified_path, graph, db)
@@ -114,17 +139,18 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     for vertex in simplified_path:
         vertex_data = graph.get_vertex_data(vertex)
         coords = vertex_data["coords"]
-        floor_id = 1 if vertex.startswith("outdoor_") else coords[2]
-        point = {"x": coords[0], "y": coords[1], "vertex": vertex, "floor": floor_id}
+        floor_number = coords[2]  # Используем floor_number
+
+        point = {"x": coords[0], "y": coords[1], "vertex": vertex, "floor": floor_number}
 
         if current_floor is None:
-            current_floor = floor_id
+            current_floor = floor_number
             floor_points.append(point)
-        elif floor_id != current_floor:
+        elif floor_number != current_floor:  # Исправлено с floor_id на floor_number
             if floor_points:
                 route.append({"floor": current_floor, "points": floor_points})
             floor_points = [point]
-            current_floor = floor_id
+            current_floor = floor_number
         else:
             floor_points.append(point)
 
