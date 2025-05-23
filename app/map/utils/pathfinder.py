@@ -11,11 +11,10 @@ def heuristic(current: tuple, goal: tuple, current_building: int, goal_building:
     x1, y1, floor_id1 = current
     x2, y2, floor_id2 = goal
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-    floor_penalty = abs(floor_id1 - floor_id2) * 50.0
-    building_penalty = 100.0 if current_building != goal_building and current_building is not None and goal_building is not None else 0.0
-    return distance + floor_penalty + building_penalty
+    floor_penalty = abs(floor_id1 - floor_id2) * 10.0  # Минимальный учёт этажей
+    return distance + floor_penalty
 
-def find_path(db, start: str, end: str, return_graph=False, max_iterations=1000):
+def find_path(db, start: str, end: str, return_graph=False, max_iterations=5000):
     logger.info(f"Starting pathfinding from {start} to {end}")
     try:
         graph = build_graph(db, start, end)
@@ -45,7 +44,7 @@ def find_path(db, start: str, end: str, return_graph=False, max_iterations=1000)
     logger.info(f"Starting A* search with initial open_set: {(0, start)}")
     while open_set and iterations < max_iterations:
         current_f, current = heappop(open_set)
-        logger.debug(f"Processing vertex: {current}, f_score={current_f}")
+        logger.info(f"Iteration {iterations}: Processing vertex: {current}, f_score={current_f}, g_score={g_score.get(current, float('inf'))}")
 
         if current in processed_vertices:
             continue
@@ -67,18 +66,16 @@ def find_path(db, start: str, end: str, return_graph=False, max_iterations=1000)
         current_building = current_data["building_id"]
 
         for neighbor, weight, edge_data in graph.get_neighbors(current):
-            neighbor_data = graph.get_vertex_data(neighbor)
-            weight_penalty = 200.0 if weight > 500 else 0.0
-            room_penalty = 100.0 if neighbor.startswith("room_") and neighbor != end else 0.0
-            segment_bonus = -10.0 if neighbor.startswith("segment_") else 0.0
-            tentative_g_score = g_score[current] + weight + weight_penalty + room_penalty + segment_bonus
+            logger.info(f"Considering neighbor: {neighbor}, weight={weight}, edge_type={edge_data['type']}")
+            tentative_g_score = g_score[current] + weight  # Только вес из графа, без изменений
 
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                f_score[neighbor] = tentative_g_score + heuristic(neighbor_data["coords"], end_coords, neighbor_data["building_id"], end_building)
+                f_score[neighbor] = tentative_g_score + heuristic(graph.get_vertex_data(neighbor)["coords"], end_coords, graph.get_vertex_data(neighbor)["building_id"], end_building)
                 heappush(open_set, (f_score[neighbor], neighbor))
+                logger.info(f"Updated neighbor: {neighbor}, new g_score={g_score[neighbor]}, new f_score={f_score[neighbor]}")
         iterations += 1
 
-    logger.warning(f"No path found from {start} to {end} within {max_iterations} iterations")
+    logger.warning(f"No path found from {start} to {end} within {max_iterations} iterations. Processed vertices: {processed_vertices}")
     return [], float('inf'), graph if return_graph else []
