@@ -9,6 +9,8 @@ from app.map.models.outdoor_segment import OutdoorSegment
 from math import atan2, degrees, sqrt
 import logging
 
+from app.map.utils.graph import Graph
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
