@@ -14,7 +14,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     logger.info(f"Starting to build graph for start={start}, end={end}")
     graph = Graph()
 
-    # Извлекаем комнаты по ID (предполагаем, что start и end — это room_<id>)
+    # Извлекаем комнаты по ID
     try:
         start_id = int(start.replace("room_", ""))
         end_id = int(end.replace("room_", ""))
@@ -36,7 +36,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     logger.info(f"Relevant building IDs: {building_ids}")
     logger.info(f"Relevant floor IDs: {floor_ids}")
 
-    # Добавляем сегменты
+    # Добавляем сегменты и phantom-вершины только для связанных комнат
     for segment in db.query(Segment).filter(Segment.building_id.in_(building_ids)).all():
         start_vertex = f"segment_{segment.id}_start"
         end_vertex = f"segment_{segment.id}_end"
@@ -46,20 +46,22 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
-        # Phantom-вершины для комнат
-        rooms = db.query(Room).filter(Room.floor_id == segment.floor_id, Room.building_id == segment.building_id).all()
-        for room in rooms:
-            room_vertex = f"room_{room.id}"
-            if room_vertex not in graph.vertices:
-                graph.add_vertex(room_vertex, {"coords": (room.cab_x, room.cab_y, room.floor_id), "building_id": room.building_id})
-            phantom_vertex = f"phantom_room_{room.id}_segment_{segment.id}"
-            graph.add_vertex(phantom_vertex, {"coords": (room.cab_x, room.cab_y, room.floor_id), "building_id": room.building_id})
-            dist_start = math.sqrt((room.cab_x - segment.start_x) ** 2 + (room.cab_y - segment.start_y) ** 2)
-            dist_end = math.sqrt((room.cab_x - segment.end_x) ** 2 + (room.cab_y - segment.end_y) ** 2)
-            graph.add_edge(room_vertex, phantom_vertex, min(dist_start, dist_end), {"type": "phantom"})
-            graph.add_edge(phantom_vertex, start_vertex, dist_start, {"type": "phantom"})
-            graph.add_edge(phantom_vertex, end_vertex, dist_end, {"type": "phantom"})
-            logger.info(f"Added phantom vertex: {phantom_vertex} -> ({room.cab_x}, {room.cab_y}, {room.floor_id})")
+        # Phantom-вершины только для комнат, связанных через дверь
+        connections = db.query(Connection).filter(Connection.segment_id == segment.id, Connection.type == "дверь").all()
+        for conn in connections:
+            room = db.query(Room).filter(Room.id == conn.room_id).first()
+            if room and room.floor_id == segment.floor_id and room.building_id == segment.building_id:
+                room_vertex = f"room_{room.id}"
+                if room_vertex not in graph.vertices:
+                    graph.add_vertex(room_vertex, {"coords": (room.cab_x, room.cab_y, room.floor_id), "building_id": room.building_id})
+                phantom_vertex = f"phantom_room_{room.id}_segment_{segment.id}"
+                graph.add_vertex(phantom_vertex, {"coords": (room.cab_x, room.cab_y, room.floor_id), "building_id": room.building_id})
+                dist_start = math.sqrt((room.cab_x - segment.start_x) ** 2 + (room.cab_y - segment.start_y) ** 2)
+                dist_end = math.sqrt((room.cab_x - segment.end_x) ** 2 + (room.cab_y - segment.end_y) ** 2)
+                graph.add_edge(room_vertex, phantom_vertex, min(dist_start, dist_end), {"type": "phantom"})
+                graph.add_edge(phantom_vertex, start_vertex, dist_start, {"type": "phantom"})
+                graph.add_edge(phantom_vertex, end_vertex, dist_end, {"type": "phantom"})
+                logger.info(f"Added phantom vertex: {phantom_vertex} -> ({room.cab_x}, {room.cab_y}, {room.floor_id})")
 
     # Добавляем outdoor-сегменты
     for outdoor in db.query(OutdoorSegment).all():

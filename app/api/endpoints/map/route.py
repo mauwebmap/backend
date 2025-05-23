@@ -1,7 +1,7 @@
+# backend/app/map/utils/route.py
 from app.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.map.utils.graph import Graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.segment import Segment
@@ -71,21 +71,22 @@ def generate_text_instructions(path: list, graph: Graph, db: Session, view_floor
     last_turn = None
 
     for i, vertex in enumerate(path):
-        vertex_data = graph.get_vertex_data(vertex)  # Используем новый метод для получения данных
+        vertex_data = graph.get_vertex_data(vertex)
         coords = vertex_data["coords"]
         floor_id = coords[2]
+        building_id = vertex_data["building_id"]
         try:
             floor = db.query(Floor).filter(Floor.id == floor_id).first()
             if floor:
-                floor_number = floor.floor_number if floor_id != 1 else 1
+                floor_number = floor.floor_number if building_id is not None else 1
             else:
-                logger.warning(f"Floor with id {floor_id} not found, defaulting to 1")
-                floor_number = 1
+                logger.warning(f"Floor with id {floor_id} not found, assuming floor_id as floor number")
+                floor_number = floor_id if building_id is not None else 1
         except Exception as e:
             logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
-            floor_number = 1
+            floor_number = floor_id if building_id is not None else 1
 
-        logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
+        logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}, building_id={building_id}")
 
         if view_floor is not None and floor_number != view_floor and vertex.startswith("outdoor_"):
             continue
@@ -103,17 +104,7 @@ def generate_text_instructions(path: list, graph: Graph, db: Session, view_floor
             if current_instruction:
                 instructions.append(" ".join(current_instruction) if not last_turn else f"{current_instruction[0]} {last_turn}")
                 current_instruction = []
-            prev_segment_id = int(prev_vertex.split("_")[1]) if prev_vertex.startswith("segment_") else None
-            curr_segment_id = int(vertex.split("_")[1]) if vertex.startswith("segment_") else None
-            if prev_segment_id and curr_segment_id:
-                connection = db.query(Connection).filter(
-                    Connection.type == "лестница",
-                    ((Connection.from_segment_id == prev_segment_id) & (Connection.to_segment_id == curr_segment_id)) |
-                    ((Connection.from_segment_id == curr_segment_id) & (Connection.to_segment_id == prev_segment_id))
-                ).first()
-                if connection:
-                    instructions.append(f"Дойдите до лестницы и {'поднимитесь' if prev_floor < floor_number else 'спуститесь'} на {floor_number}-й этаж")
-            elif prev_floor != 1 and floor_number == 1:
+            if prev_floor != 1 and floor_number == 1:
                 instructions.append("Выйдите из здания на улицу")
             elif prev_floor == 1 and floor_number != 1:
                 instructions.append(f"Войдите в здание и поднимитесь на {floor_number}-й этаж")
@@ -153,30 +144,12 @@ def generate_text_instructions(path: list, graph: Graph, db: Session, view_floor
     return instructions
 
 def simplify_route(points: list) -> list:
-    if len(points) < 3:
+    if len(points) < 2:
         return points
     simplified = [points[0]]
-    for i in range(1, len(points) - 1):
-        prev_point = points[i - 1]
-        curr_point = points[i]
-        next_point = points[i + 1]
-        dx1, dy1 = curr_point["x"] - prev_point["x"], curr_point["y"] - prev_point["y"]
-        dx2, dy2 = next_point["x"] - curr_point["x"], next_point["y"] - curr_point["y"]
-
-        if "phantom" in curr_point.get("vertex", ""):
-            simplified.append(curr_point)
-            continue
-
-        if dx1 == 0 and dy1 == 0 or dx2 == 0 and dy2 == 0:
-            simplified.append(curr_point)
-            continue
-
-        angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
-        angle = abs(((angle + 180) % 360) - 180)
-        if 30 <= angle <= 150:
-            simplified.append(curr_point)
-
-    simplified.append(points[-1])
+    for i in range(1, len(points)):
+        if points[i]["vertex"] != simplified[-1]["vertex"]:  # Удаляем только дубликаты
+            simplified.append(points[i])
     return simplified
 
 @router.get("/route", response_model=dict)
@@ -203,23 +176,58 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
     route = []
     current_floor_number = None
     floor_points = []
+    prev_vertex = None
 
     for i, vertex in enumerate(path):
-        vertex_data = graph.get_vertex_data(vertex)  # Используем новый метод
+        vertex_data = graph.get_vertex_data(vertex)
         coords = vertex_data["coords"]
         floor_id = coords[2]
+        building_id = vertex_data["building_id"]
         try:
             floor = db.query(Floor).filter(Floor.id == floor_id).first()
             if floor:
-                floor_number = floor.floor_number if floor_id != 1 else 1
+                floor_number = floor.floor_number if building_id is not None else 1
             else:
-                logger.warning(f"Floor with id {floor_id} not found, defaulting to 1")
-                floor_number = 1
+                logger.warning(f"Floor with id {floor_id} not found, assuming floor_id as floor number")
+                floor_number = floor_id if building_id is not None else 1
         except Exception as e:
             logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
-            floor_number = 1
+            floor_number = floor_id if building_id is not None else 1
 
-        logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
+        logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}, building_id={building_id}")
+
+        # Включаем все вершины сегментов и outdoor при переходах
+        if i > 0 and prev_vertex:
+            prev_data = graph.get_vertex_data(prev_vertex)
+            curr_data = vertex_data
+            prev_is_outdoor = prev_data["building_id"] is None
+            curr_is_outdoor = building_id is None
+            prev_is_segment = prev_vertex.startswith("segment_")
+            curr_is_segment = vertex.startswith("segment_")
+
+            if (prev_is_segment and curr_is_outdoor) or (prev_is_outdoor and curr_is_segment):
+                # Добавляем недостающие start/end вершины сегмента или outdoor
+                if prev_is_segment:
+                    seg_id = int(prev_vertex.split("_")[1])
+                    start_vertex = f"segment_{seg_id}_start"
+                    end_vertex = f"segment_{seg_id}_end"
+                    if start_vertex in graph.vertices and start_vertex not in [p["vertex"] for p in floor_points]:
+                        start_data = graph.get_vertex_data(start_vertex)
+                        floor_points.append({"x": start_data["coords"][0], "y": start_data["coords"][1], "vertex": start_vertex})
+                    if end_vertex in graph.vertices and end_vertex not in [p["vertex"] for p in floor_points]:
+                        end_data = graph.get_vertex_data(end_vertex)
+                        floor_points.append({"x": end_data["coords"][0], "y": end_data["coords"][1], "vertex": end_vertex})
+                elif curr_is_segment:
+                    seg_id = int(vertex.split("_")[1])
+                    start_vertex = f"segment_{seg_id}_start"
+                    end_vertex = f"segment_{seg_id}_end"
+                    if start_vertex in graph.vertices and start_vertex not in [p["vertex"] for p in floor_points]:
+                        start_data = graph.get_vertex_data(start_vertex)
+                        floor_points.append({"x": start_data["coords"][0], "y": start_data["coords"][1], "vertex": start_vertex})
+                    if end_vertex in graph.vertices and end_vertex not in [p["vertex"] for p in floor_points]:
+                        end_data = graph.get_vertex_data(end_vertex)
+                        floor_points.append({"x": end_data["coords"][0], "y": end_data["coords"][1], "vertex": end_vertex})
+
         point = {"x": coords[0], "y": coords[1], "vertex": vertex}
         if current_floor_number is None:
             current_floor_number = floor_number
@@ -231,6 +239,8 @@ async def get_route(start: str, end: str, view_floor: int = None, db: Session = 
             current_floor_number = floor_number
         else:
             floor_points.append(point)
+
+        prev_vertex = vertex
 
     if floor_points:
         route.append({"floor": current_floor_number, "points": simplify_route(floor_points)})
