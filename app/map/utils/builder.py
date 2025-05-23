@@ -11,7 +11,7 @@ import math
 
 logger = logging.getLogger(__name__)
 
-def find_closest_point_on_segment(room_x: float, room_y: float, start_x: float, start_y: float, end_x: float, end_y: float) -> tuple:
+def find_closest_point_on_segment(x: float, y: float, start_x: float, start_y: float, end_x: float, end_y: float) -> tuple:
     seg_dx = end_x - start_x
     seg_dy = end_y - start_y
     seg_len_sq = seg_dx ** 2 + seg_dy ** 2
@@ -20,11 +20,9 @@ def find_closest_point_on_segment(room_x: float, room_y: float, start_x: float, 
         logger.warning(f"Segment length is zero for start ({start_x}, {start_y}) to end ({end_x}, {end_y})")
         return start_x, start_y
 
-    dx = room_x - start_x
-    dy = room_y - start_y
+    dx = x - start_x
+    dy = y - start_y
     t = max(0, min(1, (dx * seg_dx + dy * seg_dy) / seg_len_sq))
-    logger.debug(f"Calculated t={t} for room ({room_x}, {room_y}) on segment ({start_x}, {start_y}) to ({end_x}, {end_y})")
-
     closest_x = start_x + t * seg_dx
     closest_y = start_y + t * seg_dy
     logger.debug(f"Closest point: ({closest_x}, {closest_y})")
@@ -118,15 +116,32 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_edge(phantom_vertex, segment_end, weight_to_end, {"type": "phantom"})
                 logger.info(f"Added phantom vertex: {phantom_vertex} -> ({closest_x}, {closest_y}, {room_floor_number})")
 
-    # Добавляем связи из таблицы Connections
+    # Добавляем фантомные точки для переходов между сегментами
     for conn in db.query(Connection).filter(Connection.type.in_(["улица", "дверь", "лестница"])).all():
         if conn.from_segment_id and conn.to_segment_id and conn.from_segment_id in segments and conn.to_segment_id in segments:
             from_start, from_end = segments[conn.from_segment_id]
             to_start, to_end = segments[conn.to_segment_id]
-            weight = conn.weight or 2.0
-            graph.add_edge(from_end, to_start, weight, {"type": conn.type})
-            graph.add_edge(to_end, from_start, weight, {"type": conn.type})
-            logger.info(f"Added edge ({conn.type}): {from_end} <-> {to_start}, weight={weight}")
+            from_coords = graph.get_vertex_data(from_end)["coords"]
+            to_coords = graph.get_vertex_data(to_start)["coords"]
+            # Добавляем фантомную точку на расстоянии 1 метра от to_start
+            dx = to_coords[0] - from_coords[0]
+            dy = to_coords[1] - from_coords[1]
+            dist = math.sqrt(dx ** 2 + dy ** 2)
+            if dist > 0:
+                t = 1.0 / dist  # 1 метр от to_start
+                phantom_x = to_coords[0] - t * dx
+                phantom_y = to_coords[1] - t * dy
+                phantom_vertex = f"phantom_segment_{conn.from_segment_id}_segment_{conn.to_segment_id}"
+                floor_number = floor_numbers[conn.to_segment_id]
+                graph.add_vertex(phantom_vertex, {"coords": (phantom_x, phantom_y, floor_number), "building_id": None})
+                weight_to_from = math.sqrt((phantom_x - from_coords[0]) ** 2 + (phantom_y - from_coords[1]) ** 2)
+                weight_to_to = math.sqrt((phantom_x - to_coords[0]) ** 2 + (phantom_y - to_coords[1]) ** 2)
+                graph.add_edge(from_end, phantom_vertex, weight_to_from, {"type": "phantom"})
+                graph.add_edge(phantom_vertex, to_start, weight_to_to, {"type": "phantom"})
+                graph.add_edge(to_end, phantom_vertex, weight_to_from, {"type": "phantom"})
+                graph.add_edge(phantom_vertex, from_start, weight_to_to, {"type": "phantom"})
+                logger.info(f"Added phantom vertex: {phantom_vertex} -> ({phantom_x}, {phantom_y}, {floor_number})")
+
         elif conn.from_segment_id and conn.to_outdoor_id and conn.from_segment_id in segments and conn.to_outdoor_id in outdoor_segments:
             from_start, from_end = segments[conn.from_segment_id]
             to_start, to_end = outdoor_segments[conn.to_outdoor_id]
@@ -144,10 +159,25 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         elif conn.from_outdoor_id and conn.to_outdoor_id and conn.from_outdoor_id in outdoor_segments and conn.to_outdoor_id in outdoor_segments:
             from_start, from_end = outdoor_segments[conn.from_outdoor_id]
             to_start, to_end = outdoor_segments[conn.to_outdoor_id]
-            weight = conn.weight or 10.0
-            graph.add_edge(from_end, to_start, weight, {"type": conn.type})
-            graph.add_edge(to_end, from_start, weight, {"type": conn.type})
-            logger.info(f"Added edge ({conn.type}): {from_end} <-> {to_start}, weight={weight}")
+            from_coords = graph.get_vertex_data(from_end)["coords"]
+            to_coords = graph.get_vertex_data(to_start)["coords"]
+            # Добавляем фантомную точку на расстоянии 1 метра от to_start
+            dx = to_coords[0] - from_coords[0]
+            dy = to_coords[1] - from_coords[1]
+            dist = math.sqrt(dx ** 2 + dy ** 2)
+            if dist > 0:
+                t = 1.0 / dist  # 1 метр от to_start
+                phantom_x = to_coords[0] - t * dx
+                phantom_y = to_coords[1] - t * dy
+                phantom_vertex = f"phantom_outdoor_{conn.from_outdoor_id}_outdoor_{conn.to_outdoor_id}"
+                graph.add_vertex(phantom_vertex, {"coords": (phantom_x, phantom_y, 1), "building_id": None})
+                weight_to_from = math.sqrt((phantom_x - from_coords[0]) ** 2 + (phantom_y - from_coords[1]) ** 2)
+                weight_to_to = math.sqrt((phantom_x - to_coords[0]) ** 2 + (phantom_y - to_coords[1]) ** 2)
+                graph.add_edge(from_end, phantom_vertex, weight_to_from, {"type": "phantom"})
+                graph.add_edge(phantom_vertex, to_start, weight_to_to, {"type": "phantom"})
+                graph.add_edge(to_end, phantom_vertex, weight_to_from, {"type": "phantom"})
+                graph.add_edge(phantom_vertex, from_start, weight_to_to, {"type": "phantom"})
+                logger.info(f"Added phantom vertex: {phantom_vertex} -> ({phantom_x}, {phantom_y}, 1)")
 
     logger.info(f"Graph built successfully with {len(graph.vertices)} vertices")
     return graph
