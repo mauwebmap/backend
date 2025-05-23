@@ -11,20 +11,17 @@ def heuristic(current: tuple, goal: tuple, current_building: int, goal_building:
     x1, y1, floor_id1 = current
     x2, y2, floor_id2 = goal
     distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-    # Штраф за разные этажи
     floor_penalty = abs(floor_id1 - floor_id2) * 50.0
-    # Штраф за разные здания
-    building_penalty = 100.0 if current_building != goal_building and (current_building is not None and goal_building is not None) else 0.0
+    building_penalty = 100.0 if current_building != goal_building and current_building is not None and goal_building is not None else 0.0
     return distance + floor_penalty + building_penalty
 
-def find_path(db, start: str, end: str, return_graph=False):
+def find_path(db, start: str, end: str, return_graph=False, max_iterations=1000):
     logger.info(f"Starting pathfinding from {start} to {end}")
     try:
         graph = build_graph(db, start, end)
         logger.info(f"Graph built with {len(graph.vertices)} vertices")
     except Exception as e:
         logger.error(f"Failed to build graph: {e}")
-        graph = Graph()
         return [], float('inf'), graph if return_graph else []
 
     if start not in graph.vertices or end not in graph.vertices:
@@ -43,9 +40,10 @@ def find_path(db, start: str, end: str, return_graph=False):
     g_score = {start: 0}
     f_score = {start: heuristic(start_coords, end_coords, start_building, end_building)}
     processed_vertices = set()
+    iterations = 0
 
-    logger.info(f"Starting A* search with initial open_set: {open_set}")
-    while open_set:
+    logger.info(f"Starting A* search with initial open_set: {(0, start)}")
+    while open_set and iterations < max_iterations:
         current_f, current = heappop(open_set)
         logger.debug(f"Processing vertex: {current}, f_score={current_f}")
 
@@ -60,11 +58,9 @@ def find_path(db, start: str, end: str, return_graph=False):
                 current = came_from[current]
             path.append(start)
             path.reverse()
-
             weight = g_score[end]
             logger.info(f"Path found: {path}, weight={weight}")
-
-            return path, weight, graph if return_graph else []
+            return path, weight, graph if return_graph else path
 
         current_data = graph.get_vertex_data(current)
         current_coords = current_data["coords"]
@@ -72,11 +68,8 @@ def find_path(db, start: str, end: str, return_graph=False):
 
         for neighbor, weight, edge_data in graph.get_neighbors(current):
             neighbor_data = graph.get_vertex_data(neighbor)
-            # Штраф за большие веса (например, outdoor_1_end с весом 876.43)
             weight_penalty = 200.0 if weight > 500 else 0.0
-            # Штраф за прохождение через комнаты, если это не конечная цель
             room_penalty = 100.0 if neighbor.startswith("room_") and neighbor != end else 0.0
-            # Предпочтение сегментам
             segment_bonus = -10.0 if neighbor.startswith("segment_") else 0.0
             tentative_g_score = g_score[current] + weight + weight_penalty + room_penalty + segment_bonus
 
@@ -85,7 +78,7 @@ def find_path(db, start: str, end: str, return_graph=False):
                 g_score[neighbor] = tentative_g_score
                 f_score[neighbor] = tentative_g_score + heuristic(neighbor_data["coords"], end_coords, neighbor_data["building_id"], end_building)
                 heappush(open_set, (f_score[neighbor], neighbor))
-                logger.debug(f"Added to open_set: {neighbor}, f_score={f_score[neighbor]}")
+        iterations += 1
 
-    logger.warning(f"No path found from {start} to {end}")
+    logger.warning(f"No path found from {start} to {end} within {max_iterations} iterations")
     return [], float('inf'), graph if return_graph else []

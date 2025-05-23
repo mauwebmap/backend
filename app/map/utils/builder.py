@@ -27,7 +27,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         logger.error(f"Failed to parse room IDs from {start} or {end}: {e}")
         raise ValueError(f"Invalid room format, expected room_<id>, got {start} or {end}")
 
-    # Добавляем вершины комнат
+    # Добавляем вершины только для начальной и конечной комнаты
     graph.add_vertex(start, {"coords": (start_room.cab_x, start_room.cab_y, start_room.floor_id), "building_id": start_room.building_id})
     graph.add_vertex(end, {"coords": (end_room.cab_x, end_room.cab_y, end_room.floor_id), "building_id": end_room.building_id})
 
@@ -37,8 +37,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     logger.info(f"Relevant building IDs: {building_ids}")
     logger.info(f"Relevant floor IDs: {floor_ids}")
 
-    # Добавляем сегменты и phantom-вершины для всех комнат на соответствующих этажах
-    segments_by_floor = defaultdict(list)  # Для хранения сегментов по этажам
+    # Добавляем сегменты и phantom-вершины только для комнат start и end
+    segments_by_floor = defaultdict(list)
     for segment in db.query(Segment).filter(Segment.building_id.in_(building_ids)).all():
         start_vertex = f"segment_{segment.id}_start"
         end_vertex = f"segment_{segment.id}_end"
@@ -48,46 +48,35 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
-        # Phantom-вершины для всех комнат на этом этаже
-        rooms = db.query(Room).filter(Room.floor_id == segment.floor_id, Room.building_id == segment.building_id).all()
-        for room in rooms:
-            room_vertex = f"room_{room.id}"
-            if room_vertex not in graph.vertices:
-                graph.add_vertex(room_vertex, {"coords": (room.cab_x, room.cab_y, room.floor_id), "building_id": room.building_id})
-            phantom_vertex = f"phantom_room_{room.id}_segment_{segment.id}"
-            graph.add_vertex(phantom_vertex, {"coords": (room.cab_x, room.cab_y, room.floor_id), "building_id": room.building_id})
-            dist_start = math.sqrt((room.cab_x - segment.start_x) ** 2 + (room.cab_y - segment.start_y) ** 2)
-            dist_end = math.sqrt((room.cab_x - segment.end_x) ** 2 + (room.cab_y - segment.end_y) ** 2)
-            graph.add_edge(room_vertex, phantom_vertex, min(dist_start, dist_end), {"type": "phantom"})
-            graph.add_edge(phantom_vertex, start_vertex, dist_start, {"type": "phantom"})
-            graph.add_edge(phantom_vertex, end_vertex, dist_end, {"type": "phantom"})
-            logger.info(f"Added phantom vertex: {phantom_vertex} -> ({room.cab_x}, {room.cab_y}, {room.floor_id})")
+        # Phantom-вершины только для start и end
+        for room_id, room in [(start_id, start_room), (end_id, end_room)]:
+            if room.floor_id == segment.floor_id and room.building_id == segment.building_id:
+                room_vertex = f"room_{room_id}"
+                phantom_vertex = f"phantom_room_{room_id}_segment_{segment.id}"
+                graph.add_vertex(phantom_vertex, {"coords": (room.cab_x, room.cab_y, room.floor_id), "building_id": room.building_id})
+                dist_start = math.sqrt((room.cab_x - segment.start_x) ** 2 + (room.cab_y - segment.start_y) ** 2)
+                dist_end = math.sqrt((room.cab_x - segment.end_x) ** 2 + (room.cab_y - segment.end_y) ** 2)
+                graph.add_edge(room_vertex, phantom_vertex, min(dist_start, dist_end), {"type": "phantom"})
+                graph.add_edge(phantom_vertex, start_vertex, dist_start, {"type": "phantom"})
+                graph.add_edge(phantom_vertex, end_vertex, dist_end, {"type": "phantom"})
+                logger.info(f"Added phantom vertex: {phantom_vertex} -> ({room.cab_x}, {room.cab_y}, {room.floor_id})")
 
-        # Сохраняем сегменты для соединения
         segments_by_floor[(segment.floor_id, segment.building_id)].append((segment.id, start_vertex, end_vertex))
 
-    # Универсальное соединение сегментов на одном этаже
+    # Универсальное соединение сегментов на одном этаже с ограничением
     for (floor_id, building_id), segments in segments_by_floor.items():
-        # Проверяем, есть ли явные соединения через таблицу connections
-        existing_connections = set()
-        for conn in db.query(Connection).filter(Connection.type == "лестница").all():
-            if conn.from_segment_id and conn.to_segment_id:
-                existing_connections.add((conn.from_segment_id, conn.to_segment_id))
-
-        # Соединяем сегменты, если между ними нет явного соединения
+        existing_connections = {(conn.from_segment_id, conn.to_segment_id) for conn in db.query(Connection).filter(Connection.type == "лестница").all() if conn.from_segment_id and conn.to_segment_id}
         for i, (seg_id1, start1, end1) in enumerate(segments):
             for j, (seg_id2, start2, end2) in enumerate(segments):
                 if i != j and (seg_id1, seg_id2) not in existing_connections:
-                    # Вычисляем расстояние между концом одного сегмента и началом другого
                     end1_coords = graph.get_vertex_data(end1)["coords"]
                     start2_coords = graph.get_vertex_data(start2)["coords"]
                     weight = math.sqrt((end1_coords[0] - start2_coords[0]) ** 2 + (end1_coords[1] - start2_coords[1]) ** 2)
-                    # Добавляем ребро, если расстояние разумное (например, меньше 100)
-                    if weight < 100:
+                    if weight < 100:  # Ограничиваем расстояние
                         graph.add_edge(end1, start2, weight, {"type": "corridor"})
                         logger.info(f"Added universal corridor edge: {end1} <-> {start2}, weight={weight}")
 
-    # Добавляем outdoor-сегменты (всегда floor_id=1)
+    # Добавляем outdoor-сегменты
     for outdoor in db.query(OutdoorSegment).all():
         start_vertex = f"outdoor_{outdoor.id}_start"
         end_vertex = f"outdoor_{outdoor.id}_end"
@@ -97,40 +86,23 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
-    # Соединения между outdoor-сегментами
-    for conn in db.query(Connection).filter(Connection.type == "улица").all():
-        if conn.from_outdoor_id and conn.to_outdoor_id:
-            from_vertex = f"outdoor_{conn.from_outdoor_id}_end"
-            to_vertex = f"outdoor_{conn.to_outdoor_id}_start"
-            if from_vertex in graph.vertices and to_vertex in graph.vertices:
-                graph.add_edge(from_vertex, to_vertex, conn.weight or 10.0, {"type": "street"})
-                logger.info(f"Added edge (street): {from_vertex} <-> {to_vertex}, weight={conn.weight or 10.0}")
-
-    # Соединения между сегментами и outdoor
-    for conn in db.query(Connection).filter(Connection.type.in_(["дверь", "улица"])).all():
+    # Соединения
+    for conn in db.query(Connection).filter(Connection.type.in_(["улица", "дверь", "лестница"])).all():
         if conn.from_segment_id and conn.to_outdoor_id:
             seg_vertex = f"segment_{conn.from_segment_id}_end"
             out_vertex = f"outdoor_{conn.to_outdoor_id}_start"
             if seg_vertex in graph.vertices and out_vertex in graph.vertices:
                 graph.add_edge(seg_vertex, out_vertex, conn.weight or 2.0, {"type": "outdoor start"})
-                logger.info(f"Added edge (outdoor start): {seg_vertex} <-> {out_vertex}, weight={conn.weight or 2.0}")
         if conn.from_outdoor_id and conn.to_segment_id:
             out_vertex = f"outdoor_{conn.from_outdoor_id}_end"
             seg_vertex = f"segment_{conn.to_segment_id}_start"
             if out_vertex in graph.vertices and seg_vertex in graph.vertices:
                 graph.add_edge(out_vertex, seg_vertex, conn.weight or 2.0, {"type": "outdoor end"})
-                logger.info(f"Added edge (outdoor end): {out_vertex} <-> {seg_vertex}, weight={conn.weight or 2.0}")
-
-    # Лестницы между этажами
-    for conn in db.query(Connection).filter(Connection.type == "лестница").all():
         if conn.from_segment_id and conn.to_segment_id:
             from_vertex = f"segment_{conn.from_segment_id}_end"
             to_vertex = f"segment_{conn.to_segment_id}_start"
             if from_vertex in graph.vertices and to_vertex in graph.vertices:
                 graph.add_edge(from_vertex, to_vertex, conn.weight or 2.0, {"type": "ladder"})
-                logger.info(f"Added edge (ladder): {from_vertex} <-> {to_vertex}, weight={conn.weight or 2.0}")
 
     logger.info(f"Graph built successfully with {len(graph.vertices)} vertices")
-    logger.info(f"Final vertices: {list(graph.vertices.keys())}")
-    logger.info(f"Final edges: {graph.edges}")
     return graph
