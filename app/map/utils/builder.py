@@ -4,7 +4,7 @@ from app.map.models.room import Room
 from app.map.models.segment import Segment
 from app.map.models.outdoor_segment import OutdoorSegment
 from app.map.models.connection import Connection
-from app.map.models.floor import Floor  # Предполагаем, что есть модель Floor
+from app.map.models.floor import Floor
 from sqlalchemy.orm import Session
 import logging
 import math
@@ -14,22 +14,17 @@ logger = logging.getLogger(__name__)
 
 def find_closest_point_on_segment(room_x: float, room_y: float, start_x: float, start_y: float, end_x: float, end_y: float) -> tuple:
     """Находит ближайшую точку на сегменте от (start_x, start_y) до (end_x, end_y) к точке (room_x, room_y)."""
-    # Вектор сегмента
     seg_dx = end_x - start_x
     seg_dy = end_y - start_y
     seg_len_sq = seg_dx ** 2 + seg_dy ** 2
 
-    if seg_len_sq == 0:  # Сегмент — точка
+    if seg_len_sq == 0:
         return start_x, start_y
 
-    # Вектор от начала сегмента до комнаты
     dx = room_x - start_x
     dy = room_y - start_y
-
-    # Проекция точки на сегмент
     t = max(0, min(1, (dx * seg_dx + dy * seg_dy) / seg_len_sq))
 
-    # Координаты ближайшей точки
     closest_x = start_x + t * seg_dx
     closest_y = start_y + t * seg_dy
     return closest_x, closest_y
@@ -54,11 +49,17 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     start_floor = db.query(Floor).filter(Floor.id == start_room.floor_id).first()
     end_floor = db.query(Floor).filter(Floor.id == end_room.floor_id).first()
     if not start_floor or not end_floor:
-        raise ValueError(f"Floor with id {start_room.floor_id} or {end_room.floor_id} not found")
+        # Если floor_number не удалось извлечь, используем floor_id как заглушку
+        logger.warning(f"Floor data missing for floor_id {start_room.floor_id} or {end_room.floor_id}, using floor_id as floor_number")
+        start_floor_number = start_room.floor_id  # Заглушка
+        end_floor_number = end_room.floor_id      # Заглушка
+    else:
+        start_floor_number = start_floor.floor_number
+        end_floor_number = end_floor.floor_number
 
     # Добавляем вершины для начальной и конечной комнаты
-    graph.add_vertex(start, {"coords": (start_room.cab_x, start_room.cab_y, start_floor.floor_number), "building_id": start_room.building_id})
-    graph.add_vertex(end, {"coords": (end_room.cab_x, end_room.cab_y, end_floor.floor_number), "building_id": end_room.building_id})
+    graph.add_vertex(start, {"coords": (start_room.cab_x, start_room.cab_y, start_floor_number), "building_id": start_room.building_id})
+    graph.add_vertex(end, {"coords": (end_room.cab_x, end_room.cab_y, end_floor_number), "building_id": end_room.building_id})
 
     # Определяем этажи и здания
     building_ids = {start_room.building_id, end_room.building_id} - {None}
@@ -71,12 +72,15 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     for segment in db.query(Segment).filter(Segment.building_id.in_(building_ids)).all():
         seg_floor = db.query(Floor).filter(Floor.id == segment.floor_id).first()
         if not seg_floor:
-            continue
+            logger.warning(f"Floor data missing for segment floor_id {segment.floor_id}, using floor_id as floor_number")
+            seg_floor_number = segment.floor_id  # Заглушка
+        else:
+            seg_floor_number = seg_floor.floor_number
 
         start_vertex = f"segment_{segment.id}_start"
         end_vertex = f"segment_{segment.id}_end"
-        graph.add_vertex(start_vertex, {"coords": (segment.start_x, segment.start_y, seg_floor.floor_number), "building_id": segment.building_id})
-        graph.add_vertex(end_vertex, {"coords": (segment.end_x, segment.end_y, seg_floor.floor_number), "building_id": segment.building_id})
+        graph.add_vertex(start_vertex, {"coords": (segment.start_x, segment.start_y, seg_floor_number), "building_id": segment.building_id})
+        graph.add_vertex(end_vertex, {"coords": (segment.end_x, segment.end_y, seg_floor_number), "building_id": segment.building_id})
         weight = math.sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
@@ -84,7 +88,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         # Phantom-вершины для start и end с ближайшей точкой на сегменте
         for room_id, room in [(start_id, start_room), (end_id, end_room)]:
             room_floor = db.query(Floor).filter(Floor.id == room.floor_id).first()
-            if room_floor.floor_number == seg_floor.floor_number and room.building_id == segment.building_id:
+            room_floor_number = room.floor_id if not room_floor else room_floor.floor_number  # Заглушка
+            if room_floor_number == seg_floor_number and room.building_id == segment.building_id:
                 room_vertex = f"room_{room_id}"
                 phantom_vertex = f"phantom_room_{room_id}_segment_{segment.id}"
 
@@ -94,7 +99,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     segment.start_x, segment.start_y,
                     segment.end_x, segment.end_y
                 )
-                graph.add_vertex(phantom_vertex, {"coords": (closest_x, closest_y, seg_floor.floor_number), "building_id": segment.building_id})
+                graph.add_vertex(phantom_vertex, {"coords": (closest_x, closest_y, seg_floor_number), "building_id": segment.building_id})
 
                 # Вес от комнаты до phantom-вершины
                 dist_to_phantom = math.sqrt((room.cab_x - closest_x) ** 2 + (room.cab_y - closest_y) ** 2)
@@ -105,11 +110,11 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 dist_to_end = math.sqrt((closest_x - segment.end_x) ** 2 + (closest_y - segment.end_y) ** 2)
                 graph.add_edge(phantom_vertex, start_vertex, dist_to_start, {"type": "phantom"})
                 graph.add_edge(phantom_vertex, end_vertex, dist_to_end, {"type": "phantom"})
-                logger.info(f"Added phantom vertex: {phantom_vertex} -> ({closest_x}, {closest_y}, {seg_floor.floor_number})")
+                logger.info(f"Added phantom vertex: {phantom_vertex} -> ({closest_x}, {closest_y}, {seg_floor_number})")
 
-        segments_by_floor[(seg_floor.floor_number, segment.building_id)].append((segment.id, start_vertex, end_vertex))
+        segments_by_floor[(seg_floor_number, segment.building_id)].append((segment.id, start_vertex, end_vertex))
 
-    # Универсальное соединение сегментов на одном этаже (строго по базе)
+    # Универсальное соединение сегментов на одном этаже
     for (floor_number, building_id), segments in segments_by_floor.items():
         existing_connections = {(conn.from_segment_id, conn.to_segment_id) for conn in db.query(Connection).filter(Connection.type == "лестница").all() if conn.from_segment_id and conn.to_segment_id}
         for i, (seg_id1, start1, end1) in enumerate(segments):
@@ -118,7 +123,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     end1_coords = graph.get_vertex_data(end1)["coords"]
                     start2_coords = graph.get_vertex_data(start2)["coords"]
                     weight = math.sqrt((end1_coords[0] - start2_coords[0]) ** 2 + (end1_coords[1] - start2_coords[1]) ** 2)
-                    if weight < 100:  # Ограничиваем расстояние
+                    if weight < 100:
                         graph.add_edge(end1, start2, weight, {"type": "corridor"})
                         logger.info(f"Added universal corridor edge: {end1} <-> {start2}, weight={weight}")
 
