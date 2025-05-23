@@ -137,7 +137,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         end_vertex = f"outdoor_{outdoor.id}_end"
         graph.add_vertex(start_vertex, {"coords": (outdoor.start_x, outdoor.start_y, 1), "building_id": None})
         graph.add_vertex(end_vertex, {"coords": (outdoor.end_x, outdoor.end_y, 1), "building_id": None})
-        weight = math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoore.start_y) ** 2)
+        weight = math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2)
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
         logger.info(f"Added edge: {start_vertex} <-> {end_vertex}, weight={weight}")
 
