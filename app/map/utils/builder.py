@@ -106,9 +106,9 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_edge(phantom_vertex, end_vertex, dist_to_end, {"type": "phantom"})
                 logger.info(f"Added phantom vertex: {phantom_vertex} -> ({closest_x}, {closest_y}, {seg_floor_number})")
 
-        segments_by_floor[seg_floor_number].append((segment.id, start_vertex, end_vertex))  # Убираем building_id из ключа
+        segments_by_floor[(seg_floor_number, segment.building_id)].append((segment.id, start_vertex, end_vertex))  # Восстанавливаем building_id
 
-    for floor_number, segments in segments_by_floor.items():
+    for (floor_number, building_id), segments in segments_by_floor.items():
         existing_connections = {(conn.from_segment_id, conn.to_segment_id) for conn in db.query(Connection).filter(Connection.type == "лестница").all() if conn.from_segment_id and conn.to_segment_id}
         for i, (seg_id1, start1, end1) in enumerate(segments):
             for j, (seg_id2, start2, end2) in enumerate(segments):
