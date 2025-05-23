@@ -40,7 +40,9 @@ def find_path(db, start: str, end: str, return_graph=False, max_iterations=10000
             path = reconstruct_path(came_from, current)
             return path, g_score[current], graph if return_graph else path
 
-        for neighbor, weight, _ in graph.get_neighbors(current):
+        neighbors = graph.get_neighbors(current)
+        logger.info(f"Neighbors of {current}: {[(neighbor, weight) for neighbor, weight, _ in neighbors]}")
+        for neighbor, weight, _ in neighbors:
             if neighbor in closed_set:
                 continue
 

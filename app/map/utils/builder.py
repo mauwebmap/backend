@@ -106,16 +106,13 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_edge(phantom_vertex, end_vertex, dist_to_end, {"type": "phantom"})
                 logger.info(f"Added phantom vertex: {phantom_vertex} -> ({closest_x}, {closest_y}, {seg_floor_number})")
 
-        segments_by_floor[(seg_floor_number, segment.building_id)].append((segment.id, start_vertex, end_vertex))
+        segments_by_floor[seg_floor_number].append((segment.id, start_vertex, end_vertex))  # Убираем building_id из ключа
 
-    for (floor_number, building_id), segments in segments_by_floor.items():
+    for floor_number, segments in segments_by_floor.items():
         existing_connections = {(conn.from_segment_id, conn.to_segment_id) for conn in db.query(Connection).filter(Connection.type == "лестница").all() if conn.from_segment_id and conn.to_segment_id}
         for i, (seg_id1, start1, end1) in enumerate(segments):
             for j, (seg_id2, start2, end2) in enumerate(segments):
                 if i != j and (seg_id1, seg_id2) not in existing_connections:
-                    # Убираем проверку расстояния, соединяем все сегменты на этаже
-                    end1_coords = graph.get_vertex_data(end1)["coords"]
-                    start2_coords = graph.get_vertex_data(start2)["coords"]
                     weight = 50.0  # Фиксированный вес для универсальных коридоров
                     graph.add_edge(end1, start2, weight, {"type": "corridor"})
                     logger.info(f"Added universal corridor edge: {end1} <-> {start2}, weight={weight}")
