@@ -1,4 +1,3 @@
-# backend/app/map/routes/route.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database.database import get_db
@@ -20,7 +19,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         logger.error(f"Failed to find path from {start} to {end}")
         raise HTTPException(status_code=404, detail="Path not found")
 
-    # Формируем маршрут с этажами, фильтруем сегменты
+    # Формируем маршрут с этажами
     result = []
     current_floor = None
     floor_points = []
@@ -31,13 +30,14 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         floor = vertex_data["coords"][2]
         x, y = vertex_data["coords"][0], vertex_data["coords"][1]
 
-        # Добавляем инструкции для лестниц и переходов
-        if "stair" in vertex:
-            if i > 0:
-                prev_vertex = path[i - 1]
-                prev_floor = graph.get_vertex_data(prev_vertex)["coords"][2]
-                instructions.append(f"Go down/up from floor {prev_floor} to floor {floor} via {vertex}")
-        elif "outdoor" in vertex and i > 0 and "transition" in graph.get_edge_data(path[i-1], vertex)["type"]:
+        # Инструкции для лестниц и переходов
+        if "segment" in vertex and i < len(path) - 1 and "phantom_segment" in path[i + 1]:
+            next_vertex = path[i + 1]
+            edge_data = graph.get_edge_data(vertex, next_vertex)
+            if edge_data.get("type") == "лестница":
+                prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
+                instructions.append(f"Go down/up from floor {prev_floor} to floor {floor} via {next_vertex}")
+        elif "outdoor" in vertex and i > 0 and "переход" in graph.get_edge_data(path[i - 1], vertex).get("type", ""):
             instructions.append(f"Exit to outdoor via {vertex}")
 
         if floor != current_floor:
@@ -46,9 +46,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             floor_points = []
             current_floor = floor
 
-        # Добавляем только фантомные точки или конечные точки пути
-        if "phantom" in vertex or vertex == start or vertex == end:
-            floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
+        floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
 
     if floor_points:
         result.append({"floor": current_floor, "points": floor_points})

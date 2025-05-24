@@ -1,8 +1,6 @@
 # app/map/utils/graph.py
 from typing import Dict, List, Tuple, Union, Any
 from math import sqrt
-
-
 class Graph:
     def __init__(self):
         # Dictionary of vertices: vertex -> {"coords": (x, y, floor), "building_id": int | None}
