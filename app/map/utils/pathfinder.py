@@ -48,13 +48,23 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
             path.append(start)
             path.reverse()
 
-            # Фильтруем дубликаты в пути
+            # Фильтруем дубликаты и избыточные переходы
             filtered_path = []
             seen_vertices = set()
+            prev_vertex = None
             for vertex in path:
+                # Пропускаем обратные переходы (например, phantom_stair_5_to_4 после phantom_stair_5_from_4)
+                if prev_vertex and "stair" in vertex and "stair" in prev_vertex:
+                    prev_seg_to = prev_vertex.split("_to_")[-1] if "to" in prev_vertex else None
+                    curr_seg_from = vertex.split("_from_")[-1] if "from" in vertex else None
+                    if prev_seg_to == curr_seg_from:
+                        logger.debug(f"Skipping redundant stair transition: {prev_vertex} -> {vertex}")
+                        continue
+                # Пропускаем дубликаты
                 if vertex not in seen_vertices:
                     filtered_path.append(vertex)
                     seen_vertices.add(vertex)
+                    prev_vertex = vertex
                 else:
                     logger.debug(f"Removed duplicate vertex: {vertex}")
 
