@@ -36,18 +36,22 @@ def align_coordinates(from_coords: tuple, to_coords: tuple, from_seg_start: tupl
 
     # Если сегменты горизонтальные (dy ≈ 0), выравниваем по Y
     if abs(from_seg_dy) < 1e-6 and abs(to_seg_dy) < 1e-6:
-        return (from_x, from_y, from_z), (to_x, from_y, to_z)
+        aligned_y = from_y
+        return (from_x, aligned_y, from_z), (to_x, aligned_y, to_z)
     # Если сегменты вертикальные (dx ≈ 0), выравниваем по X
     elif abs(from_seg_dx) < 1e-6 and abs(to_seg_dx) < 1e-6:
-        return (from_x, from_y, from_z), (from_x, to_y, to_z)
-    # Иначе выравниваем по ближайшей оси (предполагаем диагональный сегмент)
+        aligned_x = from_x
+        return (aligned_x, from_y, from_z), (aligned_x, to_y, to_z)
+    # Иначе выравниваем по ближайшей оси
     else:
         dist_x = abs(from_x - to_x)
         dist_y = abs(from_y - to_y)
         if dist_x < dist_y:
-            return (from_x, from_y, from_z), (from_x, to_y, to_z)
+            aligned_x = from_x
+            return (aligned_x, from_y, from_z), (aligned_x, to_y, to_z)
         else:
-            return (from_x, from_y, from_z), (to_x, from_y, to_z)
+            aligned_y = from_y
+            return (from_x, aligned_y, from_z), (to_x, aligned_y, to_z)
 
 def build_graph(db: Session, start: str, end: str) -> Graph:
     logger.info(f"Starting to build graph for start={start}, end={end}")
@@ -181,7 +185,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(phantom_from, {"coords": (from_closest_x, from_closest_y, from_floor), "building_id": None})
             graph.add_vertex(phantom_to, {"coords": (to_closest_x, to_closest_y, to_floor), "building_id": None})
 
-            weight = conn.weight or 10.0
+            # Устанавливаем вес для лестниц, чтобы избежать лишних переходов
+            weight = conn.weight if conn.weight and conn.weight > 0 else 50.0  # Минимальный вес 50 для лестниц
             graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
             segment_phantom_points[conn.from_segment_id].append(phantom_from)
             segment_phantom_points[conn.to_segment_id].append(phantom_to)
@@ -192,7 +197,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     coords1 = graph.get_vertex_data(phantom_from)["coords"]
                     coords2 = graph.get_vertex_data(other_phantom)["coords"]
                     weight = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
-                    # Увеличиваем вес для ненужных лестниц, чтобы алгоритм их избегал
+                    # Увеличиваем вес для ненужных лестниц
                     if "stair" in other_phantom and str(conn.to_segment_id) not in other_phantom:
                         weight *= 5  # Штрафуем ненужные лестницы
                     graph.add_edge(phantom_from, other_phantom, weight, {"type": "segment"})
@@ -242,7 +247,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(phantom_to_start, {"coords": (to_start_x, to_start_y, 1), "building_id": None})
             graph.add_vertex(phantom_to_end, {"coords": to_end_coords, "building_id": None})
 
-            weight_transition = conn.weight or 10.0
+            weight_transition = conn.weight if conn.weight and conn.weight > 0 else 10.0
             weight_outdoor = math.sqrt((to_end_coords[0] - to_start_x) ** 2 + (to_end_coords[1] - to_start_y) ** 2)
             graph.add_edge(phantom_from, phantom_to_start, weight_transition, {"type": "переход"})
             graph.add_edge(phantom_to_start, phantom_to_end, weight_outdoor, {"type": "outdoor"})
@@ -291,7 +296,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(phantom_to, {"coords": (to_closest_x, to_closest_y, to_start_coords[2]), "building_id": None})
 
             weight_outdoor = math.sqrt((from_end_x - from_start_coords[0]) ** 2 + (from_end_y - from_start_coords[1]) ** 2)
-            weight_transition = conn.weight or 10.0
+            weight_transition = conn.weight if conn.weight and conn.weight > 0 else 10.0
             graph.add_edge(phantom_from_start, phantom_from_end, weight_outdoor, {"type": "outdoor"})
             graph.add_edge(phantom_from_end, phantom_to, weight_transition, {"type": "переход"})
             segment_phantom_points[conn.to_segment_id].append(phantom_to)
@@ -334,7 +339,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
 
             weight_outdoor_from = math.sqrt((from_end_x - from_start_coords[0]) ** 2 + (from_end_y - from_start_coords[1]) ** 2)
             weight_outdoor_to = math.sqrt((to_end_coords[0] - to_start_x) ** 2 + (to_end_coords[1] - to_start_y) ** 2)
-            weight_transition = conn.weight or 10.0
+            weight_transition = conn.weight if conn.weight and conn.weight > 0 else 10.0
             if conn.from_outdoor_id == 1 and conn.to_outdoor_id == 3:
                 weight_transition = 100.0
             graph.add_edge(phantom_from_start, phantom_from_end, weight_outdoor_from, {"type": "outdoor"})

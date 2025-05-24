@@ -1,56 +1,85 @@
-# backend/app/map/utils/pathfinder.py
-from .graph import Graph
+import logging
 import heapq
 import math
-import logging
+from typing import Dict, List, Tuple, Optional
+from .graph import Graph
 
 logger = logging.getLogger(__name__)
 
-def heuristic(vertex1: str, vertex2: str, graph: Graph) -> float:
-    coords1 = graph.get_vertex_data(vertex1)["coords"]
-    coords2 = graph.get_vertex_data(vertex2)["coords"]
-    return math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
 
-def find_path(graph: Graph, start: str, end: str) -> tuple:
+def heuristic(a_coords: Tuple[float, float, float], b_coords: Tuple[float, float, float]) -> float:
+    dx = a_coords[0] - b_coords[0]
+    dy = a_coords[1] - b_coords[1]
+    dz = (a_coords[2] - b_coords[2]) * 50  # Учитываем этажность с весом
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+
+
+def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
     logger.info(f"Starting pathfinding from {start} to {end}")
 
-    open_set = [(0, start, [start])]
-    heapq.heapify(open_set)
-    g_scores = {start: 0}
-    f_scores = {start: heuristic(start, end, graph)}
-    came_from = {}
-    visited = set()
-    iteration = 0
-    max_iterations = 10000
+    if start not in graph.vertices or end not in graph.vertices:
+        logger.error(f"Start {start} or end {end} vertex not found in graph")
+        return [], float('inf')
 
-    while open_set and iteration < max_iterations:
-        f_score, current, path = heapq.heappop(open_set)
-        logger.info(f"Iteration {iteration}: Processing vertex: {current}, f_score={f_score}, g_score={g_scores[current]}")
+    open_set = [(0, start, 0)]
+    came_from: Dict[str, str] = {}
+    g_score: Dict[str, float] = {start: 0}
+    f_score: Dict[str, float] = {
+        start: heuristic(graph.get_vertex_data(start)["coords"], graph.get_vertex_data(end)["coords"])}
+    closed_set = set()
+    iteration = 0
+
+    while open_set:
+        iteration += 1
+        _, current, _ = heapq.heappop(open_set)
+
+        if current in closed_set:
+            continue
+
+        logger.info(
+            f"Iteration {iteration}: Processing vertex: {current}, f_score={f_score[current]}, g_score={g_score[current]}")
+        closed_set.add(current)
 
         if current == end:
-            logger.info(f"Path found: {path}, weight={g_scores[current]}")
-            return path, g_scores[current]
+            path = []
+            while current in came_from:
+                path.append(current)
+                current = came_from[current]
+            path.append(start)
+            path.reverse()
 
-        visited.add(current)
+            # Фильтруем дубликаты в пути
+            filtered_path = []
+            seen_vertices = set()
+            for vertex in path:
+                if vertex not in seen_vertices:
+                    filtered_path.append(vertex)
+                    seen_vertices.add(vertex)
+                else:
+                    logger.debug(f"Removed duplicate vertex: {vertex}")
+
+            total_weight = g_score[end]
+            logger.info(f"Path found: {filtered_path}, weight={total_weight}")
+            return filtered_path, total_weight
+
         neighbors = graph.get_neighbors(current)
-        logger.info(f"Neighbors of {current}: {[(n, w) for n, w, _ in neighbors]}")
+        logger.info(f"Neighbors of {current}: {neighbors}")
 
-        for neighbor, weight, edge_data in neighbors:
-            if neighbor in visited:
+        for neighbor, weight, _ in neighbors:
+            if neighbor in closed_set:
                 continue
 
-            logger.info(f"Considering neighbor: {neighbor}, weight={weight}")
-            tentative_g_score = g_scores[current] + weight
+            tentative_g_score = g_score[current] + weight
 
-            if neighbor not in g_scores or tentative_g_score < g_scores[neighbor]:
+            if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                logger.info(f"Considering neighbor: {neighbor}, weight={weight}")
                 came_from[neighbor] = current
-                g_scores[neighbor] = tentative_g_score
-                f_scores[neighbor] = tentative_g_score + heuristic(neighbor, end, graph)
-                new_path = path + [neighbor]
-                logger.info(f"Updated neighbor: {neighbor}, new g_score={tentative_g_score}, new f_score={f_scores[neighbor]}")
-                heapq.heappush(open_set, (f_scores[neighbor], neighbor, new_path))
+                g_score[neighbor] = tentative_g_score
+                f_score[neighbor] = tentative_g_score + heuristic(graph.get_vertex_data(neighbor)["coords"],
+                                                                  graph.get_vertex_data(end)["coords"])
+                logger.info(
+                    f"Updated neighbor: {neighbor}, new g_score={g_score[neighbor]}, new f_score={f_score[neighbor]}")
+                heapq.heappush(open_set, (f_score[neighbor], neighbor, iteration))
 
-        iteration += 1
-
-    logger.warning(f"No path found from {start} to {end} within {max_iterations} iterations. Processed vertices: {visited}")
-    return [], float("inf")
+    logger.warning(f"No path found from {start} to {end}")
+    return [], float('inf')
