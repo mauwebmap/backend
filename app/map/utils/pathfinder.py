@@ -3,6 +3,8 @@ import logging
 import math
 from typing import Dict, List, Tuple
 
+from app.map.utils.builder import Graph
+
 logger = logging.getLogger(__name__)
 
 def heuristic(coords1: tuple, coords2: tuple) -> float:
