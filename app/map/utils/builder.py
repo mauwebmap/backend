@@ -53,7 +53,6 @@ def build_graph(rooms: dict, segments: dict, outdoor_segments: dict, connections
     segment_phantom_points: Dict[int, List[str]] = {seg_id: [] for seg_id in segments}
 
     try:
-        # Валидация входных данных
         if not rooms or not segments or not connections:
             logger.info("Empty input data: rooms, segments, or connections")
             raise ValueError("Input data cannot be empty")
@@ -81,7 +80,7 @@ def build_graph(rooms: dict, segments: dict, outdoor_segments: dict, connections
                 phantom_end = f"phantom_{end_vertex}"
                 graph.add_vertex(phantom_start, {"coords": start_coords, "building_id": start_data["building_id"]})
                 graph.add_vertex(phantom_end, {"coords": end_coords, "building_id": end_data["building_id"]})
-                graph.add_edge(phantom_start, phantom_end, weight, {"type": "segment"})
+                graph.add_edge(phantom_start, phantom_end, weight, {"type": "лестница"})  # Используем "лестница"
                 segment_phantom_points[seg_id].extend([phantom_start, phantom_end])
                 logger.debug(f"Added stair segment: {phantom_start} -> {phantom_end}, weight={weight}")
             else:

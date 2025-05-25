@@ -14,7 +14,7 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
 
     try:
         if start not in graph.vertices or end not in graph.vertices:
-            logger.error(f"Start {start} or end {end} vertex not found in graph")
+            logger.info(f"Start {start} or end {end} vertex not found in graph")
             return [], float('inf')
 
         open_set = [(0, start, 0)]
@@ -23,24 +23,21 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
         f_score: Dict[str, float] = {start: heuristic(graph.get_vertex_data(start)["coords"], graph.get_vertex_data(end)["coords"])}
         closed_set = set()
         iteration = 0
-        max_iterations = 20000  # Увеличен лимит для отладки
+        max_iterations = 10000
 
-        logger.debug(f"Initial open_set: {open_set}")
         while open_set:
             iteration += 1
             if iteration > max_iterations:
-                logger.error(f"Pathfinding exceeded maximum iterations ({max_iterations})")
+                logger.info(f"Pathfinding exceeded maximum iterations ({max_iterations})")
                 return [], float('inf')
 
             _, current, _ = heapq.heappop(open_set)
-            logger.debug(f"Iteration {iteration}: Processing vertex: {current}, f_score={f_score.get(current, 'N/A')}, g_score={g_score.get(current, 'N/A')}")
 
             if current in closed_set:
-                logger.debug(f"Skipping already processed vertex: {current}")
                 continue
 
+            logger.debug(f"Iteration {iteration}: Processing vertex: {current}, f_score={f_score[current]}, g_score={g_score[current]}")
             closed_set.add(current)
-            logger.debug(f"Added to closed_set: {current}")
 
             if current == end:
                 path = []
@@ -55,7 +52,8 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
                 prev_vertex = None
                 for vertex in path:
                     if vertex not in seen_vertices:
-                        if prev_vertex and "stair" in vertex and "stair" in prev_vertex:
+                        # Исправляем проверку на "лестница" вместо "stair"
+                        if prev_vertex and "лестница" in [edge[2]["type"] for edge in graph.get_neighbors(vertex)] and "лестница" in [edge[2]["type"] for edge in graph.get_neighbors(prev_vertex)]:
                             prev_seg = prev_vertex.split("_to_")[-1] if "to" in prev_vertex else prev_vertex.split("_from_")[-1]
                             curr_seg = vertex.split("_to_")[-1] if "to" in vertex else vertex.split("_from_")[-1]
                             if prev_seg == curr_seg:
@@ -76,11 +74,9 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
 
             for neighbor, weight, data in neighbors:
                 if neighbor in closed_set:
-                    logger.debug(f"Skipping closed neighbor: {neighbor}")
                     continue
 
                 tentative_g_score = g_score[current] + weight
-                logger.debug(f"Considering neighbor: {neighbor}, weight={weight}, tentative_g_score={tentative_g_score}")
 
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                     came_from[neighbor] = current
@@ -93,5 +89,5 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
         return [], float('inf')
 
     except Exception as e:
-        logger.error(f"Error during pathfinding: {str(e)}")
+        logger.info(f"Error during pathfinding: {str(e)}")
         return [], float('inf')
