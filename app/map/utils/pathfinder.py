@@ -15,10 +15,6 @@ def heuristic(vertex1: str, vertex2: str, graph: Graph) -> float:
 def find_path(graph: Graph, start: str, end: str) -> tuple:
     logger.info(f"Начало поиска пути от {start} до {end}")
 
-    if start not in graph.vertices or end not in graph.vertices:
-        logger.error(f"Вершина {start} или {end} отсутствует в графе")
-        return [], float("inf")
-
     open_set = [(0, start, [start])]
     heapq.heapify(open_set)
     g_scores = {start: 0}
@@ -30,7 +26,7 @@ def find_path(graph: Graph, start: str, end: str) -> tuple:
 
     while open_set and iteration < max_iterations:
         f_score, current, path = heapq.heappop(open_set)
-        logger.debug(f"Итерация {iteration}: {current}, f_score={f_score}")
+        logger.info(f"Итерация {iteration}: обработка вершины {current}, f_score={f_score}, g_score={g_scores[current]}")
 
         if current == end:
             logger.info(f"Путь найден: {path}, вес={g_scores[current]}")
@@ -41,20 +37,28 @@ def find_path(graph: Graph, start: str, end: str) -> tuple:
 
         visited.add(current)
         neighbors = graph.get_neighbors(current)
+        logger.info(f"Соседи вершины {current}: {[(n, w) for n, w, _ in neighbors]}")
 
-        for neighbor, weight, _ in neighbors:
+        for neighbor, weight, edge_data in neighbors:
             if neighbor in visited:
                 continue
 
+            logger.info(f"Рассматривается сосед: {neighbor}, вес={weight}")
             tentative_g_score = g_scores[current] + weight
+            if weight <= 0:  # Проверка на некорректные веса
+                logger.warning(f"Обнаружен вес <= 0 для ребра {current} -> {neighbor}, заменяем на 0.1")
+                weight = 0.1
+                tentative_g_score = g_scores[current] + weight
+
             if neighbor not in g_scores or tentative_g_score < g_scores[neighbor]:
                 came_from[neighbor] = current
                 g_scores[neighbor] = tentative_g_score
                 f_scores[neighbor] = tentative_g_score + heuristic(neighbor, end, graph)
                 new_path = path + [neighbor]
+                logger.info(f"Обновлён сосед: {neighbor}, новый g_score={tentative_g_score}, новый f_score={f_scores[neighbor]}")
                 heapq.heappush(open_set, (f_scores[neighbor], neighbor, new_path))
 
         iteration += 1
 
-    logger.warning(f"Путь не найден за {max_iterations} итераций")
+    logger.info(f"Путь от {start} до {end} не найден в течение {max_iterations} итераций. Обработано вершин: {len(visited)}")
     return [], float("inf")
