@@ -1,18 +1,12 @@
-import logging
 import heapq
 import math
-from typing import Dict, List, Tuple, Optional
-from .graph import Graph
+from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
-
-def heuristic(a_coords: Tuple[float, float, float], b_coords: Tuple[float, float, float]) -> float:
-    dx = a_coords[0] - b_coords[0]
-    dy = a_coords[1] - b_coords[1]
-    dz = (a_coords[2] - b_coords[2]) * 50  # Учитываем этажность с весом
-    return math.sqrt(dx * dx + dy * dy + dz * dz)
-
+def heuristic(coords1: tuple, coords2: tuple) -> float:
+    """Евклидово расстояние между двумя точками."""
+    return math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
 
 def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
     logger.info(f"Starting pathfinding from {start} to {end}")
@@ -24,8 +18,7 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
     open_set = [(0, start, 0)]
     came_from: Dict[str, str] = {}
     g_score: Dict[str, float] = {start: 0}
-    f_score: Dict[str, float] = {
-        start: heuristic(graph.get_vertex_data(start)["coords"], graph.get_vertex_data(end)["coords"])}
+    f_score: Dict[str, float] = {start: heuristic(graph.get_vertex_data(start)["coords"], graph.get_vertex_data(end)["coords"])}
     closed_set = set()
     iteration = 0
 
@@ -36,8 +29,7 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
         if current in closed_set:
             continue
 
-        logger.info(
-            f"Iteration {iteration}: Processing vertex: {current}, f_score={f_score[current]}, g_score={g_score[current]}")
+        logger.info(f"Iteration {iteration}: Processing vertex: {current}, f_score={f_score[current]}, g_score={g_score[current]}")
         closed_set.add(current)
 
         if current == end:
@@ -48,7 +40,7 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
             path.append(start)
             path.reverse()
 
-            # Улучшенная фильтрация дубликатов и обратных переходов
+            # Фильтрация избыточных переходов
             filtered_path = []
             seen_vertices = set()
             prev_vertex = None
@@ -56,10 +48,9 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
                 if vertex not in seen_vertices:
                     # Пропускаем обратные лестничные переходы
                     if prev_vertex and "stair" in vertex and "stair" in prev_vertex:
-                        prev_seg = prev_vertex.split("_to_")[-1] if "to" in prev_vertex else \
-                        prev_vertex.split("_from_")[-1]
+                        prev_seg = prev_vertex.split("_to_")[-1] if "to" in prev_vertex else prev_vertex.split("_from_")[-1]
                         curr_seg = vertex.split("_to_")[-1] if "to" in vertex else vertex.split("_from_")[-1]
-                        if prev_seg == curr_seg and g_score[vertex] >= g_score[prev_vertex]:
+                        if prev_seg == curr_seg:
                             logger.debug(f"Skipping redundant stair transition: {prev_vertex} -> {vertex}")
                             continue
                     filtered_path.append(vertex)
@@ -85,10 +76,8 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
                 logger.info(f"Considering neighbor: {neighbor}, weight={weight}")
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                f_score[neighbor] = tentative_g_score + heuristic(graph.get_vertex_data(neighbor)["coords"],
-                                                                  graph.get_vertex_data(end)["coords"])
-                logger.info(
-                    f"Updated neighbor: {neighbor}, new g_score={g_score[neighbor]}, new f_score={f_score[neighbor]}")
+                f_score[neighbor] = tentative_g_score + heuristic(graph.get_vertex_data(neighbor)["coords"], graph.get_vertex_data(end)["coords"])
+                logger.info(f"Updated neighbor: {neighbor}, new g_score={g_score[neighbor]}, new f_score={f_score[neighbor]}")
                 heapq.heappush(open_set, (f_score[neighbor], neighbor, iteration))
 
     logger.warning(f"No path found from {start} to {end}")
