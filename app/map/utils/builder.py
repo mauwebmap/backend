@@ -1,179 +1,293 @@
-import math
+from .graph import Graph
+from app.map.models.room import Room
+from app.map.models.segment import Segment
+from app.map.models.outdoor_segment import OutdoorSegment
+from app.map.models.connection import Connection
+from app.map.models.floor import Floor
+from sqlalchemy.orm import Session
 import logging
-from typing import Dict, List, Tuple
+import math
 
 logger = logging.getLogger(__name__)
 
-class Graph:
-    def __init__(self):
-        self.vertices = {}
-        self.edges = {}
-
-    def add_vertex(self, vertex: str, data: dict):
-        self.vertices[vertex] = data
-        if vertex not in self.edges:
-            self.edges[vertex] = []
-
-    def add_edge(self, from_vertex: str, to_vertex: str, weight: float, data: dict):
-        self.edges[from_vertex].append((to_vertex, weight, data))
-        self.edges[to_vertex].append((from_vertex, weight, data))
-
-    def get_vertex_data(self, vertex: str) -> dict:
-        return self.vertices.get(vertex, {})
-
-    def get_neighbors(self, vertex: str) -> List[Tuple[str, float, dict]]:
-        return self.edges.get(vertex, [])
-
-def find_closest_point_on_segment(px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> Tuple[float, float]:
-    dx = x2 - x1
-    dy = y2 - y1
-    if dx == 0 and dy == 0:
-        return x1, y1
-    t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
-    t = max(0, min(1, t))
-    closest_x = x1 + t * dx
-    closest_y = y1 + t * dy
+def find_closest_point_on_segment(x: float, y: float, start_x: float, start_y: float, end_x: float, end_y: float) -> tuple:
+    seg_dx = end_x - start_x
+    seg_dy = end_y - start_y
+    seg_len_sq = seg_dx ** 2 + seg_dy ** 2
+    if seg_len_sq == 0:
+        logger.info(f"Длина сегмента нулевая для start ({start_x}, {start_y}) to end ({end_x}, {end_y})")
+        return start_x, start_y
+    dx = x - start_x
+    dy = y - start_y
+    t = max(0, min(1, (dx * seg_dx + dy * seg_dy) / seg_len_sq))
+    closest_x = start_x + t * seg_dx
+    closest_y = start_y + t * seg_dy
+    logger.info(f"Ближайшая точка: ({closest_x}, {closest_y})")
     return closest_x, closest_y
 
 def align_coordinates(from_coords: tuple, to_coords: tuple, from_seg_start: tuple, from_seg_end: tuple, to_seg_start: tuple, to_seg_end: tuple) -> tuple:
+    """Выравниваем координаты для лестниц и переходов, чтобы путь был плавным."""
     from_x, from_y, from_z = from_coords
     to_x, to_y, to_z = to_coords
-    dist_x = abs(from_x - to_x)
-    dist_y = abs(from_y - to_y)
-    if dist_x < dist_y:
-        aligned_x = from_seg_end[0]
-        return (aligned_x, from_y, from_z), (aligned_x, to_y, to_z)
-    else:
-        aligned_y = from_seg_end[1]
+    from_seg_dx = from_seg_end[0] - from_seg_start[0]
+    from_seg_dy = from_seg_end[1] - from_seg_start[1]
+    to_seg_dx = to_seg_end[0] - to_seg_start[0]
+    to_seg_dy = to_seg_end[1] - to_seg_start[1]
+
+    # Если сегменты горизонтальные, выравниваем по Y
+    if abs(from_seg_dy) < 1e-6 and abs(to_seg_dy) < 1e-6:
+        aligned_y = (from_y + to_y) / 2 if abs(from_y - to_y) > 10 else from_y
         return (from_x, aligned_y, from_z), (to_x, aligned_y, to_z)
+    # Если сегменты вертикальные, выравниваем по X
+    elif abs(from_seg_dx) < 1e-6 and abs(to_seg_dx) < 1e-6:
+        aligned_x = (from_x + to_x) / 2 if abs(from_x - to_x) > 10 else from_x
+        return (aligned_x, from_y, from_z), (aligned_x, to_y, to_z)
+    # Для диагональных сегментов выбираем ближайшую ось
+    else:
+        dist_x = abs(from_x - to_x)
+        dist_y = abs(from_y - to_y)
+        if dist_x < dist_y:
+            aligned_x = (from_x + to_x) / 2
+            return (aligned_x, from_y, from_z), (aligned_x, to_y, to_z)
+        else:
+            aligned_y = (from_y + to_y) / 2
+            return (from_x, aligned_y, from_z), (to_x, aligned_y, to_z)
 
-def build_graph(rooms: dict, segments: dict, outdoor_segments: dict, connections: dict) -> Graph:
-    logger.info("Starting graph construction")
+def build_graph(db: Session, start: str, end: str) -> Graph:
+    logger.info(f"Начало построения графа для start={start}, end={end}")
     graph = Graph()
-    segment_phantom_points: Dict[int, List[str]] = {seg_id: [] for seg_id in segments}
 
+    # Парсинг начальной и конечной комнат
     try:
-        if not rooms or not segments or not connections:
-            logger.info("Empty input data: rooms, segments, or connections")
-            raise ValueError("Input data cannot be empty")
+        start_id = int(start.replace("room_", ""))
+        end_id = int(end.replace("room_", ""))
+        start_room = db.query(Room).filter(Room.id == start_id).first()
+        end_room = db.query(Room).filter(Room.id == end_id).first()
+        if not start_room or not end_room:
+            logger.info(f"Комната с id {start_id} или {end_id} не найдена")
+            raise ValueError(f"Комната с id {start_id} или {end_id} не найдена")
+    except ValueError as e:
+        logger.info(f"Ошибка при парсинге ID комнат из {start} или {end}: {e}")
+        raise ValueError(f"Неверный формат комнаты, ожидается room_<id>, получено {start} или {end}")
 
-        # Добавляем комнаты
-        for room_id, (x, y, floor, building_id) in rooms.items():
-            vertex = f"room_{room_id}"
-            graph.add_vertex(vertex, {"coords": (x, y, floor), "building_id": building_id})
-            logger.debug(f"Added room vertex: {vertex} at {(x, y, floor)}")
+    start_floor = db.query(Floor).filter(Floor.id == start_room.floor_id).first()
+    end_floor = db.query(Floor).filter(Floor.id == end_room.floor_id).first()
+    start_floor_number = start_floor.floor_number if start_floor else start_room.floor_id
+    end_floor_number = end_floor.floor_number if end_floor else end_room.floor_id
+    logger.info(f"Назначен номер этажа: room_{start_id}={start_floor_number}, room_{end_id}={end_floor_number}")
 
-        # Добавляем сегменты
-        for seg_id, (start_vertex, end_vertex) in segments.items():
-            start_data = graph.get_vertex_data(start_vertex)
-            end_data = graph.get_vertex_data(end_vertex)
-            if not start_data or not end_data:
-                logger.warning(f"Segment {seg_id} has missing vertices: {start_vertex}, {end_vertex}")
+    graph.add_vertex(start, {"coords": (start_room.cab_x, start_room.cab_y, start_floor_number), "building_id": start_room.building_id})
+    graph.add_vertex(end, {"coords": (end_room.cab_x, end_room.cab_y, end_floor_number), "building_id": end_room.building_id})
+
+    building_ids = {start_room.building_id, end_room.building_id} - {None}
+    floor_ids = {start_room.floor_id, end_room.floor_id}
+    logger.info(f"Актуальные ID зданий: {building_ids}")
+    logger.info(f"Актуальные ID этажей: {floor_ids}")
+
+    # Сегменты
+    segments = {}
+    floor_numbers = {}
+    segment_phantom_points = {}
+    for segment in db.query(Segment).filter(Segment.building_id.in_(building_ids)).all():
+        seg_floor = db.query(Floor).filter(Floor.id == segment.floor_id).first()
+        seg_floor_number = seg_floor.floor_number if seg_floor else segment.floor_id
+        floor_numbers[segment.id] = seg_floor_number
+        start_vertex = f"segment_{segment.id}_start"
+        end_vertex = f"segment_{segment.id}_end"
+        graph.add_vertex(start_vertex, {"coords": (segment.start_x, segment.start_y, seg_floor_number), "building_id": segment.building_id})
+        graph.add_vertex(end_vertex, {"coords": (segment.end_x, segment.end_y, seg_floor_number), "building_id": segment.building_id})
+        segments[segment.id] = (start_vertex, end_vertex)
+        segment_phantom_points[segment.id] = []
+        weight = math.sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2)
+        graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
+        logger.info(f"Добавлены вершины сегмента: {start_vertex} -> {end_vertex}, вес={weight}")
+
+    # Уличные сегменты
+    outdoor_segments = {}
+    for outdoor in db.query(OutdoorSegment).all():
+        start_vertex = f"outdoor_{outdoor.id}_start"
+        end_vertex = f"outdoor_{outdoor.id}_end"
+        coords_start = (outdoor.start_x, outdoor.start_y, 1)
+        coords_end = (outdoor.end_x, outdoor.end_y, 1)
+        graph.add_vertex(start_vertex, {"coords": coords_start, "building_id": None})
+        graph.add_vertex(end_vertex, {"coords": coords_end, "building_id": None})
+        weight = math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2)
+        graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
+        outdoor_segments[outdoor.id] = (start_vertex, end_vertex)
+        logger.info(f"Добавлены уличные вершины: {start_vertex} -> {end_vertex}, вес={weight}")
+
+    # Фантомные точки для комнат
+    for room_id, room in [(start_id, start_room), (end_id, end_room)]:
+        room_floor = db.query(Floor).filter(Floor.id == room.floor_id).first()
+        room_floor_number = room_floor.floor_number if room_floor else room.floor_id
+        room_vertex = f"room_{room_id}"
+        connections = db.query(Connection).filter(Connection.room_id == room_id).all()
+        for conn in connections:
+            if conn.segment_id and conn.segment_id in segments:
+                segment_start, segment_end = segments[conn.segment_id]
+                closest_x, closest_y = find_closest_point_on_segment(
+                    room.cab_x, room.cab_y,
+                    graph.get_vertex_data(segment_start)["coords"][0],
+                    graph.get_vertex_data(segment_start)["coords"][1],
+                    graph.get_vertex_data(segment_end)["coords"][0],
+                    graph.get_vertex_data(segment_end)["coords"][1]
+                )
+                phantom_vertex = f"phantom_room_{room_id}_segment_{conn.segment_id}"
+                graph.add_vertex(phantom_vertex, {"coords": (closest_x, closest_y, room_floor_number), "building_id": room.building_id})
+                weight_to_room = conn.weight or 2.0
+                graph.add_edge(room_vertex, phantom_vertex, weight_to_room, {"type": "phantom"})
+                segment_phantom_points[conn.segment_id].append(phantom_vertex)
+                logger.info(f"Добавлена фантомная вершина для комнаты: {phantom_vertex} -> ({closest_x}, {closest_y}, {room_floor_number})")
+
+    # Соединения через таблицу connections
+    for conn in db.query(Connection).all():
+        if start_floor_number == end_floor_number and conn.type == "лестница":
+            continue
+
+        # Лестницы
+        if conn.from_segment_id and conn.to_segment_id and conn.from_segment_id in segments and conn.to_segment_id in segments:
+            from_start, from_end = segments[conn.from_segment_id]
+            to_start, to_end = segments[conn.to_segment_id]
+            from_floor = floor_numbers[conn.from_segment_id]
+            to_floor = floor_numbers[conn.to_segment_id]
+
+            if start_floor_number == end_floor_number and from_floor == to_floor:
                 continue
 
-            start_coords = start_data["coords"]
-            end_coords = end_data["coords"]
-            weight = math.sqrt((end_coords[0] - start_coords[0]) ** 2 + (end_coords[1] - start_coords[1]) ** 2)
+            from_start_coords = graph.get_vertex_data(from_start)["coords"]
+            from_end_coords = graph.get_vertex_data(from_end)["coords"]
+            to_start_coords = graph.get_vertex_data(to_start)["coords"]
+            to_end_coords = graph.get_vertex_data(to_end)["coords"]
 
-            if "stair" in start_vertex or "stair" in end_vertex:
-                phantom_start = f"phantom_{start_vertex}"
-                phantom_end = f"phantom_{end_vertex}"
-                graph.add_vertex(phantom_start, {"coords": start_coords, "building_id": start_data["building_id"]})
-                graph.add_vertex(phantom_end, {"coords": end_coords, "building_id": end_data["building_id"]})
-                graph.add_edge(phantom_start, phantom_end, weight, {"type": "лестница"})  # Используем "лестница"
-                segment_phantom_points[seg_id].extend([phantom_start, phantom_end])
-                logger.debug(f"Added stair segment: {phantom_start} -> {phantom_end}, weight={weight}")
-            else:
-                graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
-                logger.debug(f"Added segment: {start_vertex} -> {end_vertex}, weight={weight}")
+            stair_x = (from_end_coords[0] + to_start_coords[0]) / 2
+            stair_y = (from_end_coords[1] + to_start_coords[1]) / 2
 
-        # Уличные сегменты
-        for outdoor_id, (start_vertex, end_vertex) in outdoor_segments.items():
-            start_coords = graph.get_vertex_data(start_vertex)["coords"]
-            end_coords = graph.get_vertex_data(end_vertex)["coords"]
-            weight = math.sqrt((end_coords[0] - start_coords[0]) ** 2 + (end_coords[1] - start_coords[1]) ** 2)
-            graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
-            logger.debug(f"Added outdoor segment: {start_vertex} -> {end_vertex}, weight={weight}")
+            from_closest_x, from_closest_y = find_closest_point_on_segment(
+                stair_x, stair_y,
+                from_start_coords[0], from_start_coords[1],
+                from_end_coords[0], from_end_coords[1]
+            )
+            to_closest_x, to_closest_y = find_closest_point_on_segment(
+                stair_x, stair_y,
+                to_start_coords[0], to_start_coords[1],
+                to_end_coords[0], to_end_coords[1]
+            )
 
-        # Связи из таблицы connections
-        for conn_id, conn in connections.items():
-            if conn.from_room_id and conn.to_segment_id:
-                room_vertex = f"room_{conn.from_room_id}"
-                seg_start, seg_end = segments[conn.to_segment_id]
-                room_coords = graph.get_vertex_data(room_vertex)["coords"]
-                seg_start_coords = graph.get_vertex_data(seg_start)["coords"]
-                seg_end_coords = graph.get_vertex_data(seg_end)["coords"]
+            (from_closest_x, from_closest_y, from_floor), (to_closest_x, to_closest_y, to_floor) = align_coordinates(
+                (from_closest_x, from_closest_y, from_floor),
+                (to_closest_x, to_closest_y, to_floor),
+                (from_start_coords[0], from_start_coords[1]),
+                (from_end_coords[0], from_end_coords[1]),
+                (to_start_coords[0], to_start_coords[1]),
+                (to_end_coords[0], to_end_coords[1])
+            )
 
-                closest_x, closest_y = find_closest_point_on_segment(
-                    room_coords[0], room_coords[1],
-                    seg_start_coords[0], seg_start_coords[1],
-                    seg_end_coords[0], seg_end_coords[1]
-                )
+            phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
+            phantom_to = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
+            graph.add_vertex(phantom_from, {"coords": (from_closest_x, from_closest_y, from_floor), "building_id": None})
+            graph.add_vertex(phantom_to, {"coords": (to_closest_x, to_closest_y, to_floor), "building_id": None})
 
-                phantom_vertex = f"phantom_room_{conn.from_room_id}_segment_{conn.to_segment_id}"
-                graph.add_vertex(phantom_vertex, {"coords": (closest_x, closest_y, room_coords[2]), "building_id": None})
-                weight = math.sqrt((room_coords[0] - closest_x) ** 2 + (room_coords[1] - closest_y) ** 2)
-                graph.add_edge(room_vertex, phantom_vertex, weight, {"type": "phantom"})
-                segment_phantom_points[conn.to_segment_id].append(phantom_vertex)
+            weight = conn.weight or 10.0
+            graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
+            segment_phantom_points[conn.from_segment_id].append(phantom_from)
+            segment_phantom_points[conn.to_segment_id].append(phantom_to)
 
-                for other_phantom in segment_phantom_points[conn.to_segment_id]:
-                    if other_phantom != phantom_vertex:
-                        coords1 = graph.get_vertex_data(phantom_vertex)["coords"]
-                        coords2 = graph.get_vertex_data(other_phantom)["coords"]
-                        weight = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
-                        graph.add_edge(phantom_vertex, other_phantom, weight, {"type": "segment"})
-                logger.debug(f"Added room-segment connection: {room_vertex} -> {phantom_vertex}")
+            for other_phantom in segment_phantom_points[conn.from_segment_id]:
+                if other_phantom != phantom_from:
+                    coords1 = graph.get_vertex_data(phantom_from)["coords"]
+                    coords2 = graph.get_vertex_data(other_phantom)["coords"]
+                    weight = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
+                    if "stair" in other_phantom and str(conn.to_segment_id) not in other_phantom:
+                        weight *= 5
+                    graph.add_edge(phantom_from, other_phantom, weight, {"type": "segment"})
+            for other_phantom in segment_phantom_points[conn.to_segment_id]:
+                if other_phantom != phantom_to:
+                    coords1 = graph.get_vertex_data(phantom_to)["coords"]
+                    coords2 = graph.get_vertex_data(other_phantom)["coords"]
+                    weight = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
+                    if "stair" in other_phantom and str(conn.from_segment_id) not in other_phantom:
+                        weight *= 5
+                    graph.add_edge(phantom_to, other_phantom, weight, {"type": "segment"})
+            logger.info(f"Добавлено лестничное соединение: {phantom_from} -> {phantom_to}, вес={weight}")
 
-            elif conn.from_outdoor_id and conn.to_segment_id:
-                from_start, from_end = outdoor_segments[conn.from_outdoor_id]
-                to_start, to_end = segments[conn.to_segment_id]
-                from_start_coords = graph.get_vertex_data(from_start)["coords"]
-                from_end_coords = graph.get_vertex_data(from_end)["coords"]
-                to_start_coords = graph.get_vertex_data(to_start)["coords"]
-                to_end_coords = graph.get_vertex_data(to_end)["coords"]
+        # Дверь-улица
+        elif conn.from_segment_id and conn.to_outdoor_id and conn.from_segment_id in segments and conn.to_outdoor_id in outdoor_segments:
+            from_start, from_end = segments[conn.from_segment_id]
+            to_start, to_end = outdoor_segments[conn.to_outdoor_id]
+            from_start_coords = graph.get_vertex_data(from_start)["coords"]
+            from_end_coords = graph.get_vertex_data(from_end)["coords"]
+            to_start_coords = graph.get_vertex_data(to_start)["coords"]
+            to_end_coords = graph.get_vertex_data(to_end)["coords"]
 
-                door_x = from_end_coords[0]
-                door_y = from_end_coords[1]
-                to_closest_x, to_closest_y = find_closest_point_on_segment(
-                    door_x, door_y,
-                    to_start_coords[0], to_start_coords[1],
-                    to_end_coords[0], to_end_coords[1]
-                )
+            door_x = to_start_coords[0]
+            door_y = to_start_coords[1]
+            from_closest_x, from_closest_y = find_closest_point_on_segment(
+                door_x, door_y,
+                from_start_coords[0], from_start_coords[1],
+                from_end_coords[0], from_end_coords[1]
+            )
 
-                (from_end_x, from_end_y, from_floor), (to_closest_x, to_closest_y, to_floor) = align_coordinates(
-                    (from_end_coords[0], from_end_coords[1], 1),
-                    (to_closest_x, to_closest_y, to_start_coords[2]),
-                    (from_start_coords[0], from_start_coords[1]),
-                    (from_end_coords[0], from_end_coords[1]),
-                    (to_start_coords[0], to_start_coords[1]),
-                    (to_end_coords[0], to_end_coords[1])
-                )
+            (from_closest_x, from_closest_y, from_floor), (to_start_x, to_start_y, to_floor) = align_coordinates(
+                (from_closest_x, from_closest_y, from_start_coords[2]),
+                (to_start_coords[0], to_start_coords[1], 1),
+                (from_start_coords[0], from_start_coords[1]),
+                (from_end_coords[0], from_end_coords[1]),
+                (to_start_coords[0], to_start_coords[1]),
+                (to_end_coords[0], to_end_coords[1])
+            )
 
-                phantom_from_start = f"phantom_outdoor_{conn.from_outdoor_id}_start"
-                phantom_from_end = f"phantom_outdoor_{conn.from_outdoor_id}_end"
-                phantom_to = f"phantom_segment_{conn.to_segment_id}_to_outdoor_{conn.from_outdoor_id}"
+            phantom_from = f"phantom_segment_{conn.from_segment_id}_to_outdoor_{conn.to_outdoor_id}"
+            graph.add_vertex(phantom_from, {"coords": (from_closest_x, from_closest_y, from_start_coords[2]), "building_id": None})
+            weight_transition = conn.weight or 10.0
+            graph.add_edge(phantom_from, to_start, weight_transition, {"type": "переход"})
+            segment_phantom_points[conn.from_segment_id].append(phantom_from)
+            for other_phantom in segment_phantom_points[conn.from_segment_id]:
+                if other_phantom != phantom_from:
+                    coords1 = graph.get_vertex_data(phantom_from)["coords"]
+                    coords2 = graph.get_vertex_data(other_phantom)["coords"]
+                    weight = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
+                    graph.add_edge(phantom_from, other_phantom, weight, {"type": "segment"})
+            logger.info(f"Добавлен переход дверь-улица: {phantom_from} -> {to_start}, вес={weight_transition}")
 
-                graph.add_vertex(phantom_from_start, {"coords": from_start_coords, "building_id": None})
-                graph.add_vertex(phantom_from_end, {"coords": (from_end_x, from_end_y, 1), "building_id": None})
-                graph.add_vertex(phantom_to, {"coords": (to_closest_x, to_closest_y, to_start_coords[2]), "building_id": None})
+        # Улица-дверь
+        elif conn.from_outdoor_id and conn.to_segment_id and conn.from_outdoor_id in outdoor_segments and conn.to_segment_id in segments:
+            from_start, from_end = outdoor_segments[conn.from_outdoor_id]
+            to_start, to_end = segments[conn.to_segment_id]
+            from_start_coords = graph.get_vertex_data(from_start)["coords"]
+            from_end_coords = graph.get_vertex_data(from_end)["coords"]
+            to_start_coords = graph.get_vertex_data(to_start)["coords"]
+            to_end_coords = graph.get_vertex_data(to_end)["coords"]
 
-                weight_outdoor = math.sqrt((from_end_x - from_start_coords[0]) ** 2 + (from_end_y - from_start_coords[1]) ** 2)
-                weight_transition = max(conn.weight or 0, 10.0)
-                graph.add_edge(phantom_from_start, phantom_from_end, weight_outdoor, {"type": "outdoor"})
-                graph.add_edge(phantom_from_end, phantom_to, weight_transition, {"type": "переход"})
-                segment_phantom_points[conn.to_segment_id].append(phantom_to)
+            door_x = from_end_coords[0]
+            door_y = from_end_coords[1]
+            to_closest_x, to_closest_y = find_closest_point_on_segment(
+                door_x, door_y,
+                to_start_coords[0], to_start_coords[1],
+                to_end_coords[0], to_end_coords[1]
+            )
 
-                for other_phantom in segment_phantom_points[conn.to_segment_id]:
-                    if other_phantom != phantom_to:
-                        coords1 = graph.get_vertex_data(phantom_to)["coords"]
-                        coords2 = graph.get_vertex_data(other_phantom)["coords"]
-                        weight = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
-                        graph.add_edge(phantom_to, other_phantom, weight, {"type": "segment"})
-                logger.debug(f"Added outdoor-segment connection: {phantom_from_start} -> {phantom_to}")
+            (from_end_x, from_end_y, from_floor), (to_closest_x, to_closest_y, to_floor) = align_coordinates(
+                (from_end_coords[0], from_end_coords[1], 1),
+                (to_closest_x, to_closest_y, to_start_coords[2]),
+                (from_start_coords[0], from_start_coords[1]),
+                (from_end_coords[0], from_end_coords[1]),
+                (to_start_coords[0], to_start_coords[1]),
+                (to_end_coords[0], to_end_coords[1])
+            )
 
-        logger.info("Graph construction completed successfully")
-        return graph
+            phantom_from = f"phantom_outdoor_{conn.from_outdoor_id}_end"
+            phantom_to = f"phantom_segment_{conn.to_segment_id}_from_outdoor_{conn.from_outdoor_id}"
+            graph.add_vertex(phantom_to, {"coords": (to_closest_x, to_closest_y, to_start_coords[2]), "building_id": None})
+            weight_transition = conn.weight or 10.0
+            graph.add_edge(from_end, phantom_to, weight_transition, {"type": "переход"})
+            segment_phantom_points[conn.to_segment_id].append(phantom_to)
+            for other_phantom in segment_phantom_points[conn.to_segment_id]:
+                if other_phantom != phantom_to:
+                    coords1 = graph.get_vertex_data(phantom_to)["coords"]
+                    coords2 = graph.get_vertex_data(other_phantom)["coords"]
+                    weight = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
+                    graph.add_edge(phantom_to, other_phantom, weight, {"type": "segment"})
+            logger.info(f"Добавлен переход улица-дверь: {from_end} -> {phantom_to}, вес={weight_transition}")
 
-    except Exception as e:
-        logger.info(f"Error building graph: {str(e)}")
-        raise
+    logger.info(f"Граф успешно построен с {len(graph.vertices)} вершинами")
+    return graph

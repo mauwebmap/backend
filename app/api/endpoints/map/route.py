@@ -10,16 +10,29 @@ router = APIRouter()
 
 @router.get("/route")
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
-    logger.info(f"Received request to find route from {start} to {end}")
+    logger.info(f"Получен запрос на построение маршрута от {start} до {end}")
 
-    graph = build_graph(db, start, end)
-    path, weight = find_path(graph, start, end)
+    logger.info("Начало построения графа")
+    try:
+        graph = build_graph(db, start, end)
+        logger.info("Граф успешно построен")
+    except Exception as e:
+        logger.info(f"Ошибка при построении графа: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при построении графа: {str(e)}")
+
+    logger.info(f"Начало поиска пути от {start} до {end}")
+    try:
+        path, weight = find_path(graph, start, end)
+        logger.info(f"Поиск пути завершён: путь={path}, вес={weight}")
+    except Exception as e:
+        logger.info(f"Ошибка при поиске пути: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при поиске пути: {str(e)}")
 
     if not path:
-        logger.error(f"Failed to find path from {start} to {end}")
-        raise HTTPException(status_code=404, detail="Path not found")
+        logger.info(f"Путь от {start} до {end} не найден")
+        raise HTTPException(status_code=404, detail="Путь не найден")
 
-    # Формируем маршрут с этажами
+    # Формируем маршрут с этажами и улучшенными инструкциями
     result = []
     current_floor = None
     floor_points = []
@@ -31,14 +44,15 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         x, y = vertex_data["coords"][0], vertex_data["coords"][1]
 
         # Инструкции для лестниц и переходов
-        if "segment" in vertex and i < len(path) - 1 and "phantom_segment" in path[i + 1]:
+        if i < len(path) - 1:
             next_vertex = path[i + 1]
-            edge_data = graph.get_edge_data(vertex, next_vertex)
-            if edge_data.get("type") == "лестница":
+            edge_data = next(graph.get_neighbors(vertex), [None, 0, {}])[2]  # Получаем данные ребра
+            if edge_data and edge_data.get("type") == "лестница":
                 prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
-                instructions.append(f"Go down/up from floor {prev_floor} to floor {floor} via {next_vertex}")
-        elif "outdoor" in vertex and i > 0 and "переход" in graph.get_edge_data(path[i - 1], vertex).get("type", ""):
-            instructions.append(f"Exit to outdoor via {vertex}")
+                direction = "up" if floor > prev_floor else "down"
+                instructions.append(f"Go {direction} from floor {prev_floor} to floor {floor} via {vertex}")
+            elif edge_data and edge_data.get("type") == "переход" and "outdoor" in next_vertex:
+                instructions.append(f"Exit to outdoor via {next_vertex}")
 
         if floor != current_floor:
             if floor_points:
@@ -51,5 +65,5 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     if floor_points:
         result.append({"floor": current_floor, "points": floor_points})
 
-    logger.info(f"Pathfinding completed: path={path}, weight={weight}")
+    logger.info(f"Маршрут успешно сформирован: путь={result}, вес={weight}, инструкции={instructions}")
     return {"path": result, "weight": weight, "instructions": instructions}
