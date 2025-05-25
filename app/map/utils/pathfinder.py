@@ -48,20 +48,20 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
             path.append(start)
             path.reverse()
 
-            # Фильтруем дубликаты и избыточные переходы
+            # Улучшенная фильтрация дубликатов и обратных переходов
             filtered_path = []
             seen_vertices = set()
             prev_vertex = None
             for vertex in path:
-                # Пропускаем обратные переходы (например, phantom_stair_5_to_4 после phantom_stair_5_from_4)
-                if prev_vertex and "stair" in vertex and "stair" in prev_vertex:
-                    prev_seg_to = prev_vertex.split("_to_")[-1] if "to" in prev_vertex else None
-                    curr_seg_from = vertex.split("_from_")[-1] if "from" in vertex else None
-                    if prev_seg_to == curr_seg_from:
-                        logger.debug(f"Skipping redundant stair transition: {prev_vertex} -> {vertex}")
-                        continue
-                # Пропускаем дубликаты
                 if vertex not in seen_vertices:
+                    # Пропускаем обратные лестничные переходы
+                    if prev_vertex and "stair" in vertex and "stair" in prev_vertex:
+                        prev_seg = prev_vertex.split("_to_")[-1] if "to" in prev_vertex else \
+                        prev_vertex.split("_from_")[-1]
+                        curr_seg = vertex.split("_to_")[-1] if "to" in vertex else vertex.split("_from_")[-1]
+                        if prev_seg == curr_seg and g_score[vertex] >= g_score[prev_vertex]:
+                            logger.debug(f"Skipping redundant stair transition: {prev_vertex} -> {vertex}")
+                            continue
                     filtered_path.append(vertex)
                     seen_vertices.add(vertex)
                     prev_vertex = vertex
@@ -75,7 +75,7 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
         neighbors = graph.get_neighbors(current)
         logger.info(f"Neighbors of {current}: {neighbors}")
 
-        for neighbor, weight, _ in neighbors:
+        for neighbor, weight, data in neighbors:
             if neighbor in closed_set:
                 continue
 

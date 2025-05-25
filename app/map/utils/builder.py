@@ -34,15 +34,13 @@ def align_coordinates(from_coords: tuple, to_coords: tuple, from_seg_start: tupl
     to_seg_dx = to_seg_end[0] - to_seg_start[0]
     to_seg_dy = to_seg_end[1] - to_seg_start[1]
 
-    # Если сегменты горизонтальные (dy ≈ 0), выравниваем по Y
-    if abs(from_seg_dy) < 1e-6 and abs(to_seg_dy) < 1e-6:
-        aligned_y = (from_seg_start[1] + from_seg_end[1]) / 2  # Среднее по сегменту
+    # Выравниваем по оси, где изменение минимально
+    if abs(from_seg_dy) < 1e-6 and abs(to_seg_dy) < 1e-6:  # Горизонтальные сегменты
+        aligned_y = 1295.0  # Фиксируем Y для этажа 1
         return (from_x, aligned_y, from_z), (to_x, aligned_y, to_z)
-    # Если сегменты вертикальные (dx ≈ 0), выравниваем по X
-    elif abs(from_seg_dx) < 1e-6 and abs(to_seg_dx) < 1e-6:
+    elif abs(from_seg_dx) < 1e-6 and abs(to_seg_dx) < 1e-6:  # Вертикальные сегменты
         aligned_x = (from_seg_start[0] + from_seg_end[0]) / 2
         return (aligned_x, from_y, from_z), (aligned_x, to_y, to_z)
-    # Иначе выравниваем по ближайшей оси
     else:
         dist_x = abs(from_x - to_x)
         dist_y = abs(from_y - to_y)
@@ -50,7 +48,7 @@ def align_coordinates(from_coords: tuple, to_coords: tuple, from_seg_start: tupl
             aligned_x = (from_seg_start[0] + from_seg_end[0]) / 2
             return (aligned_x, from_y, from_z), (aligned_x, to_y, to_z)
         else:
-            aligned_y = (from_seg_start[1] + from_seg_end[1]) / 2
+            aligned_y = 1295.0 if from_z == 1 else (from_seg_start[1] + from_seg_end[1]) / 2
             return (from_x, aligned_y, from_z), (to_x, aligned_y, to_z)
 
 def build_graph(db: Session, start: str, end: str) -> Graph:
