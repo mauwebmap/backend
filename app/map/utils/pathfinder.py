@@ -2,7 +2,6 @@ import heapq
 import logging
 import math
 from typing import Dict, List, Tuple
-
 from app.map.utils.builder import Graph
 
 logger = logging.getLogger(__name__)
@@ -24,21 +23,24 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
         f_score: Dict[str, float] = {start: heuristic(graph.get_vertex_data(start)["coords"], graph.get_vertex_data(end)["coords"])}
         closed_set = set()
         iteration = 0
-        max_iterations = 10000  # Ограничение на количество итераций
+        max_iterations = 20000  # Увеличен лимит для отладки
 
+        logger.debug(f"Initial open_set: {open_set}")
         while open_set:
             iteration += 1
             if iteration > max_iterations:
-                logger.error("Pathfinding exceeded maximum iterations")
+                logger.error(f"Pathfinding exceeded maximum iterations ({max_iterations})")
                 return [], float('inf')
 
             _, current, _ = heapq.heappop(open_set)
+            logger.debug(f"Iteration {iteration}: Processing vertex: {current}, f_score={f_score.get(current, 'N/A')}, g_score={g_score.get(current, 'N/A')}")
 
             if current in closed_set:
+                logger.debug(f"Skipping already processed vertex: {current}")
                 continue
 
-            logger.info(f"Iteration {iteration}: Processing vertex: {current}, f_score={f_score[current]}, g_score={g_score[current]}")
             closed_set.add(current)
+            logger.debug(f"Added to closed_set: {current}")
 
             if current == end:
                 path = []
@@ -48,7 +50,6 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
                 path.append(start)
                 path.reverse()
 
-                # Улучшенная фильтрация
                 filtered_path = []
                 seen_vertices = set()
                 prev_vertex = None
@@ -71,20 +72,21 @@ def find_path(graph: Graph, start: str, end: str) -> Tuple[List[str], float]:
                 return filtered_path, total_weight
 
             neighbors = graph.get_neighbors(current)
-            logger.info(f"Neighbors of {current}: {neighbors}")
+            logger.debug(f"Neighbors of {current}: {[(n, w) for n, w, _ in neighbors]}")
 
             for neighbor, weight, data in neighbors:
                 if neighbor in closed_set:
+                    logger.debug(f"Skipping closed neighbor: {neighbor}")
                     continue
 
                 tentative_g_score = g_score[current] + weight
+                logger.debug(f"Considering neighbor: {neighbor}, weight={weight}, tentative_g_score={tentative_g_score}")
 
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-                    logger.info(f"Considering neighbor: {neighbor}, weight={weight}")
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g_score
                     f_score[neighbor] = tentative_g_score + heuristic(graph.get_vertex_data(neighbor)["coords"], graph.get_vertex_data(end)["coords"])
-                    logger.info(f"Updated neighbor: {neighbor}, new g_score={g_score[neighbor]}, new f_score={f_score[neighbor]}")
+                    logger.debug(f"Updated neighbor: {neighbor}, new g_score={g_score[neighbor]}, new f_score={f_score[neighbor]}")
                     heapq.heappush(open_set, (f_score[neighbor], neighbor, iteration))
 
         logger.warning(f"No path found from {start} to {end}")

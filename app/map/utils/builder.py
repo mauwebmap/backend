@@ -48,15 +48,21 @@ def align_coordinates(from_coords: tuple, to_coords: tuple, from_seg_start: tupl
         return (from_x, aligned_y, from_z), (to_x, aligned_y, to_z)
 
 def build_graph(rooms: dict, segments: dict, outdoor_segments: dict, connections: dict) -> Graph:
+    logger.info("Starting graph construction")
     graph = Graph()
     segment_phantom_points: Dict[int, List[str]] = {seg_id: [] for seg_id in segments}
 
     try:
+        # Валидация входных данных
+        if not rooms or not segments or not connections:
+            logger.info("Empty input data: rooms, segments, or connections")
+            raise ValueError("Input data cannot be empty")
+
         # Добавляем комнаты
         for room_id, (x, y, floor, building_id) in rooms.items():
             vertex = f"room_{room_id}"
             graph.add_vertex(vertex, {"coords": (x, y, floor), "building_id": building_id})
-            logger.info(f"Added room vertex: {vertex} at {(x, y, floor)}")
+            logger.debug(f"Added room vertex: {vertex} at {(x, y, floor)}")
 
         # Добавляем сегменты
         for seg_id, (start_vertex, end_vertex) in segments.items():
@@ -77,10 +83,10 @@ def build_graph(rooms: dict, segments: dict, outdoor_segments: dict, connections
                 graph.add_vertex(phantom_end, {"coords": end_coords, "building_id": end_data["building_id"]})
                 graph.add_edge(phantom_start, phantom_end, weight, {"type": "segment"})
                 segment_phantom_points[seg_id].extend([phantom_start, phantom_end])
-                logger.info(f"Added stair segment: {phantom_start} -> {phantom_end}, weight={weight}")
+                logger.debug(f"Added stair segment: {phantom_start} -> {phantom_end}, weight={weight}")
             else:
                 graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
-                logger.info(f"Added segment: {start_vertex} -> {end_vertex}, weight={weight}")
+                logger.debug(f"Added segment: {start_vertex} -> {end_vertex}, weight={weight}")
 
         # Уличные сегменты
         for outdoor_id, (start_vertex, end_vertex) in outdoor_segments.items():
@@ -88,7 +94,7 @@ def build_graph(rooms: dict, segments: dict, outdoor_segments: dict, connections
             end_coords = graph.get_vertex_data(end_vertex)["coords"]
             weight = math.sqrt((end_coords[0] - start_coords[0]) ** 2 + (end_coords[1] - start_coords[1]) ** 2)
             graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
-            logger.info(f"Added outdoor segment: {start_vertex} -> {end_vertex}, weight={weight}")
+            logger.debug(f"Added outdoor segment: {start_vertex} -> {end_vertex}, weight={weight}")
 
         # Связи из таблицы connections
         for conn_id, conn in connections.items():
@@ -116,9 +122,8 @@ def build_graph(rooms: dict, segments: dict, outdoor_segments: dict, connections
                         coords1 = graph.get_vertex_data(phantom_vertex)["coords"]
                         coords2 = graph.get_vertex_data(other_phantom)["coords"]
                         weight = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
-                        # Исправляем вес для корректного расстояния
                         graph.add_edge(phantom_vertex, other_phantom, weight, {"type": "segment"})
-                logger.info(f"Added room-segment connection: {room_vertex} -> {phantom_vertex}")
+                logger.debug(f"Added room-segment connection: {room_vertex} -> {phantom_vertex}")
 
             elif conn.from_outdoor_id and conn.to_segment_id:
                 from_start, from_end = outdoor_segments[conn.from_outdoor_id]
@@ -165,10 +170,11 @@ def build_graph(rooms: dict, segments: dict, outdoor_segments: dict, connections
                         coords2 = graph.get_vertex_data(other_phantom)["coords"]
                         weight = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
                         graph.add_edge(phantom_to, other_phantom, weight, {"type": "segment"})
-                logger.info(f"Added outdoor-segment connection: {phantom_from_start} -> {phantom_to}")
+                logger.debug(f"Added outdoor-segment connection: {phantom_from_start} -> {phantom_to}")
 
+        logger.info("Graph construction completed successfully")
         return graph
 
     except Exception as e:
-        logger.error(f"Error building graph: {str(e)}")
+        logger.info(f"Error building graph: {str(e)}")
         raise
