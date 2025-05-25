@@ -46,7 +46,12 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         # Инструкции для лестниц и переходов
         if i < len(path) - 1:
             next_vertex = path[i + 1]
-            edge_data = next(graph.get_neighbors(vertex), [None, 0, {}])[2]  # Получаем данные ребра
+            neighbors = graph.get_neighbors(vertex)
+            edge_data = {}
+            for neighbor, weight, data in neighbors:
+                if neighbor == next_vertex:
+                    edge_data = data
+                    break
             if edge_data and edge_data.get("type") == "лестница":
                 prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
                 direction = "up" if floor > prev_floor else "down"
