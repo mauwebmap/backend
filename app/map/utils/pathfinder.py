@@ -8,7 +8,10 @@ logger = logging.getLogger(__name__)
 def heuristic(vertex1: str, vertex2: str, graph: Graph) -> float:
     coords1 = graph.get_vertex_data(vertex1)["coords"]
     coords2 = graph.get_vertex_data(vertex2)["coords"]
-    return math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
+    # Учитываем разницу этажей с коэффициентом 10 (примерный вес лестницы)
+    floor_diff = abs(coords1[2] - coords2[2]) * 10
+    distance_2d = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
+    return distance_2d + floor_diff
 
 def find_path(graph: Graph, start: str, end: str) -> tuple:
     logger.info(f"Начало поиска пути от {start} до {end}")
@@ -20,7 +23,7 @@ def find_path(graph: Graph, start: str, end: str) -> tuple:
     came_from = {}
     visited = set()
     iteration = 0
-    max_iterations = 20000  # Увеличиваем лимит для больших графов
+    max_iterations = 20000
 
     while open_set and iteration < max_iterations:
         f_score, current, path = heapq.heappop(open_set)
