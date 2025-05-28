@@ -1,4 +1,6 @@
 # app/map/utils/pathfinder.py
+from typing import List
+
 from .graph import Graph
 import heapq
 import math
