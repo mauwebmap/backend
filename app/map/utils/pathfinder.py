@@ -1,6 +1,4 @@
 # app/map/utils/pathfinder.py
-from typing import List
-
 from .graph import Graph
 import heapq
 import math
@@ -57,26 +55,41 @@ def filter_path(graph: Graph, path: List[str]) -> List[str]:
     i = 0
     while i < len(path):
         vertex = path[i]
-        filtered_path.append(vertex)
+        if vertex not in filtered_path:
+            filtered_path.append(vertex)
 
         # Полностью отображаем лестницы
         if i + 1 < len(path) and graph.get_edge_data(vertex, path[i + 1]).get("type") == "лестница":
             while i + 1 < len(path) and graph.get_edge_data(path[i], path[i + 1]).get("type") == "лестница":
                 i += 1
-                filtered_path.append(path[i])
+                if path[i] not in filtered_path:
+                    filtered_path.append(path[i])
 
         # Полностью отображаем уличные сегменты для "дверь-улица" или "улица-дверь"
         elif i + 1 < len(path) and graph.get_edge_data(vertex, path[i + 1]).get("type") == "дверь":
             next_vertex = path[i + 1]
-            if i + 2 < len(path) and ("outdoor" in next_vertex or graph.get_edge_data(next_vertex, path[i + 2]).get("type") == "улица"):
-                outdoor_id = int(next_vertex.split("_")[1]) if "outdoor" in next_vertex else int(path[i + 2].split("_")[1])
-                start_vertex, end_vertex = f"outdoor_{outdoor_id}_start", f"outdoor_{outdoor_id}_end"
-                if start_vertex in path[i:i+3] and end_vertex in path[i:i+3]:
-                    if start_vertex not in filtered_path:
-                        filtered_path.append(start_vertex)
-                    if end_vertex not in filtered_path:
-                        filtered_path.append(end_vertex)
-                    i += 2
+            if i + 2 < len(path):
+                next_next_vertex = path[i + 2]
+                if "outdoor" in next_vertex or graph.get_edge_data(next_vertex, next_next_vertex).get("type") == "улица":
+                    # Извлекаем outdoor_id только для вершин с "outdoor"
+                    outdoor_id = None
+                    if "outdoor" in next_vertex:
+                        outdoor_id = int(next_vertex.split("_")[1])
+                    elif "outdoor" in next_next_vertex:
+                        outdoor_id = int(next_next_vertex.split("_")[1])
+                    if outdoor_id is not None:
+                        start_vertex = f"outdoor_{outdoor_id}_start"
+                        end_vertex = f"outdoor_{outdoor_id}_end"
+                        if start_vertex in path[i:i+3] and end_vertex in path[i:i+3]:
+                            if start_vertex not in filtered_path:
+                                filtered_path.append(start_vertex)
+                            if end_vertex not in filtered_path:
+                                filtered_path.append(end_vertex)
+                            i += 2
+                        else:
+                            i += 1
+                    else:
+                        i += 1
                 else:
                     i += 1
             else:
