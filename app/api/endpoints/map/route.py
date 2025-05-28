@@ -59,52 +59,22 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     if edge_data.get("type") == "лестница":
                         prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
                         direction = "up" if floor > prev_floor else "down"
-                        instructions.append(f"Go {direction} from floor {prev_floor} to floor {floor} via {vertex}")
-                    elif edge_data.get("type") == "дверь" and "outdoor" in next_vertex:
-                        instructions.append(f"Exit building via {vertex} to outdoor")
-                    elif edge_data.get("type") == "улица" and "outdoor" in vertex and "segment" in next_vertex:
-                        instructions.append(f"Follow outdoor path from {vertex} to building entry")
-                    elif edge_data.get("type") == "дверь" and "segment" in vertex and "outdoor" in next_vertex:
-                        instructions.append(f"Enter building from outdoor via {next_vertex}")
+                        instructions.append(f"Go {direction} via {vertex} to floor {floor}")
+                    elif edge_data.get("type") == "дверь" and vertex.startswith("outdoor_"):
+                        instructions.append(f"Exit building via {vertex}")
+                    elif edge_data.get("type") == "дверь" and next_vertex.startswith("outdoor_"):
+                        instructions.append(f"Enter building via {next_vertex}")
 
-            # Обработка только чистых уличных вершин (outdoor_<id>_<start/end>)
-            if vertex.startswith("outdoor_") and i < len(path) - 1:
-                next_vertex = path[i + 1]
-                next_vertex_data = graph.get_vertex_data(next_vertex)
-                if not next_vertex_data or "coords" not in next_vertex_data:
-                    logger.error(f"Отсутствуют данные для следующей вершины {next_vertex}")
-                    raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {next_vertex}")
-
-                # Проверяем, что следующая вершина либо уличная, либо это вход в здание
-                if (next_vertex.startswith("outdoor_") or ("segment" in next_vertex and any(
-                        edge[2].get("type") == "дверь" for edge in graph.get_neighbors(vertex)))):
-                    parts = vertex.split("_")
-                    if len(parts) != 3 or not parts[1].isdigit() or parts[2] not in ("start", "end"):
-                        logger.error(f"Некорректный формат уличной вершины {vertex}: ожидается outdoor_<id>_<start/end>")
-                        raise HTTPException(status_code=500, detail=f"Некорректный формат вершины {vertex}")
-
-                    outdoor_id = int(parts[1])
-                    outdoor_start, outdoor_end = [v for v in graph.vertices if
-                                                 v.startswith(f"outdoor_{outdoor_id}_") and v.endswith(("_start", "_end"))]
-                    start_coords = graph.get_vertex_data(outdoor_start)["coords"]
-                    end_coords = graph.get_vertex_data(outdoor_end)["coords"]
-                    if vertex == outdoor_start:
-                        floor_points.append({"x": start_coords[0], "y": start_coords[1], "vertex": outdoor_start, "floor": 1})
-                        floor_points.append({"x": end_coords[0], "y": end_coords[1], "vertex": outdoor_end, "floor": 1})
-                    elif vertex == outdoor_end:
-                        floor_points.append({"x": end_coords[0], "y": end_coords[1], "vertex": outdoor_end, "floor": 1})
-                        floor_points.append({"x": start_coords[0], "y": start_coords[1], "vertex": outdoor_start, "floor": 1})
-                else:
-                    continue
-
-            if floor != current_floor:
-                if floor_points:
-                    result.append({"floor": current_floor, "points": floor_points})
-                    logger.debug(f"Добавлен этаж {current_floor} с точками: {floor_points}")
-                floor_points = []
-                current_floor = floor
-
-            floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
+            # Фильтрация вершин: добавляем только ключевые точки
+            if vertex.startswith("room_") or vertex.startswith("outdoor_") or \
+               (vertex.startswith("phantom_") and "segment" in vertex and i == len(path) - 2):
+                if floor != current_floor:
+                    if floor_points:
+                        result.append({"floor": current_floor, "points": floor_points})
+                        logger.debug(f"Добавлен этаж {current_floor} с точками: {floor_points}")
+                    floor_points = []
+                    current_floor = floor
+                floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
 
         if floor_points:
             result.append({"floor": current_floor, "points": floor_points})
