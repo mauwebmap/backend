@@ -1,4 +1,5 @@
 # app/map/utils/builder.py
+import logging
 from .graph import Graph
 from app.map.models.room import Room
 from app.map.models.segment import Segment
