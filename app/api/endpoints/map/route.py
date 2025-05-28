@@ -67,8 +67,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 edge_data = graph.get_edge_data(vertex, next_vertex)
                 if edge_data.get("type") == "лестница":
                     prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
-                    direction = "up" if floor > prev_floor else "down"
-                    instructions.append(f"Go {direction} via stairs from floor {prev_floor} to floor {floor}")
+                    if prev_floor != floor:  # Добавляем инструкцию только при реальном изменении этажа
+                        direction = "up" if floor > prev_floor else "down"
+                        instructions.append(f"Go {direction} via stairs from floor {prev_floor} to floor {floor}")
                 elif edge_data.get("type") == "дверь" and next_vertex.startswith("outdoor_"):
                     instructions.append("Exit building through the door")
                 elif edge_data.get("type") == "дверь" and vertex.startswith("outdoor_"):

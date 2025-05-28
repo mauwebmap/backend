@@ -57,21 +57,10 @@ def filter_path(graph: Graph, path: List[str]) -> List[str]:
     i = 0
     while i < len(path):
         vertex = path[i]
-        # Пропускаем segment_X_start и segment_X_end, если это не точка перехода
+        # Пропускаем все точки, кроме комнат и фантомных точек переходов
         if vertex.startswith("segment_") and (vertex.endswith("_start") or vertex.endswith("_end")):
-            # Проверяем, является ли это точкой перехода (лестница или дверь)
-            is_transition = False
-            if i + 1 < len(path):
-                edge_type = graph.get_edge_data(vertex, path[i + 1]).get("type")
-                if edge_type in ["лестница", "дверь"]:
-                    is_transition = True
-            if i > 0:
-                edge_type = graph.get_edge_data(path[i - 1], vertex).get("type")
-                if edge_type in ["лестница", "дверь"]:
-                    is_transition = True
-            if not is_transition:
-                i += 1
-                continue
+            i += 1
+            continue
 
         if vertex not in filtered_path:
             filtered_path.append(vertex)
@@ -89,7 +78,6 @@ def filter_path(graph: Graph, path: List[str]) -> List[str]:
             if i + 2 < len(path):
                 next_next_vertex = path[i + 2]
                 if graph.get_edge_data(vertex, next_vertex).get("type") == "дверь":
-                    # Проверяем, что вершина действительно начинается с 'outdoor_'
                     outdoor_id = None
                     if next_vertex.startswith("outdoor_"):
                         outdoor_id = int(next_vertex.split("_")[1])
