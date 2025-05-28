@@ -40,6 +40,9 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     # Добавление комнат
     rooms = db.query(Room).filter(Room.building_id.in_(building_ids)).all()
     for room in rooms:
+        if not hasattr(room, 'floor_id'):
+            logger.error(f"Объект комнаты не имеет атрибута floor_id: {room}")
+            raise ValueError(f"Некорректный объект комнаты: {room}")
         floor = db.query(Floor).filter(Floor.id == room.floor_id).first()
         floor_number = floor.floor_number if floor else room.floor_id
         vertex = f"room_{room.id}"
@@ -48,8 +51,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     # Добавление сегментов
     segments = {}
     floor_numbers = {}
-    segments = db.query(Segment).filter(Segment.building_id.in_(building_ids)).all()
-    for segment in segments:
+    segment_query = db.query(Segment).filter(Segment.building_id.in_(building_ids)).all()
+    for segment in segment_query:
         floor = db.query(Floor).filter(Floor.id == segment.floor_id).first()
         floor_number = floor.floor_number if floor else segment.floor_id
         floor_numbers[segment.id] = floor_number
@@ -94,6 +97,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     for conn in db.query(Connection).all():
         # Лестницы
         if conn.from_segment_id and conn.to_segment_id:
+            if conn.from_segment_id not in segments or conn.to_segment_id not in segments:
+                continue
             from_start, from_end = segments[conn.from_segment_id]
             to_start, to_end = segments[conn.to_segment_id]
             from_floor = floor_numbers[conn.from_segment_id]
@@ -113,6 +118,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
 
         # Дверь-улица
         elif conn.from_segment_id and conn.to_outdoor_id:
+            if conn.from_segment_id not in segments or conn.to_outdoor_id not in outdoor_segments:
+                continue
             from_start, from_end = segments[conn.from_segment_id]
             to_start, to_end = outdoor_segments[conn.to_outdoor_id]
             phantom_from = f"phantom_segment_{conn.from_segment_id}_to_outdoor_{conn.to_outdoor_id}"
@@ -126,6 +133,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
 
         # Улица-дверь
         elif conn.from_outdoor_id and conn.to_segment_id:
+            if conn.from_outdoor_id not in outdoor_segments or conn.to_segment_id not in segments:
+                continue
             from_start, from_end = outdoor_segments[conn.from_outdoor_id]
             to_start, to_end = segments[conn.to_segment_id]
             phantom_to = f"phantom_segment_{conn.to_segment_id}_from_outdoor_{conn.from_outdoor_id}"
@@ -139,6 +148,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
 
         # Улица-улица
         elif conn.from_outdoor_id and conn.to_outdoor_id:
+            if conn.from_outdoor_id not in outdoor_segments or conn.to_outdoor_id not in outdoor_segments:
+                continue
             from_start, from_end = outdoor_segments[conn.from_outdoor_id]
             to_start, to_end = outdoor_segments[conn.to_outdoor_id]
             weight = conn.weight if conn.weight else 10.0
