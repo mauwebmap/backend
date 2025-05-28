@@ -1,3 +1,5 @@
+import math
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database.database import get_db
@@ -47,11 +49,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         if i < len(path) - 1:
             next_vertex = path[i + 1]
             neighbors = graph.get_neighbors(vertex)
-            edge_data = {}
-            for neighbor, weight, data in neighbors:
-                if neighbor == next_vertex:
-                    edge_data = data
-                    break
+            edge_data = next((data for neighbor, weight, data in neighbors if neighbor == next_vertex), {})
             if edge_data:
                 if edge_data.get("type") == "лестница":
                     prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
@@ -64,6 +62,24 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 elif edge_data.get("type") == "дверь" and "segment" in vertex and "outdoor" in next_vertex:
                     instructions.append(f"Enter building from outdoor via {next_vertex}")
 
+        # Добавляем полный путь для уличных сегментов
+        if "outdoor" in vertex and i < len(path) - 1:
+            next_vertex_data = graph.get_vertex_data(next_vertex)
+            if "outdoor" in next_vertex or ("segment" in next_vertex and any(
+                    edge[2].get("type") == "дверь" for edge in graph.get_neighbors(vertex))):
+                continue  # Пропускаем, если следующий узел тоже outdoor
+            outdoor_id = int(vertex.split("_")[1])
+            outdoor_start, outdoor_end = [v for v in graph.vertices if
+                                          v.startswith(f"outdoor_{outdoor_id}_") and v.endswith(("_start", "_end"))]
+            start_coords = graph.get_vertex_data(outdoor_start)["coords"]
+            end_coords = graph.get_vertex_data(outdoor_end)["coords"]
+            if vertex == outdoor_start:
+                floor_points.append({"x": start_coords[0], "y": start_coords[1], "vertex": outdoor_start, "floor": 1})
+                floor_points.append({"x": end_coords[0], "y": end_coords[1], "vertex": outdoor_end, "floor": 1})
+            elif vertex == outdoor_end:
+                floor_points.append({"x": end_coords[0], "y": end_coords[1], "vertex": outdoor_end, "floor": 1})
+                floor_points.append({"x": start_coords[0], "y": start_coords[1], "vertex": outdoor_start, "floor": 1})
+
         if floor != current_floor:
             if floor_points:
                 result.append({"floor": current_floor, "points": floor_points})
@@ -74,6 +90,41 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
     if floor_points:
         result.append({"floor": current_floor, "points": floor_points})
+
+        # Определение направлений с учётом угла поворота
+    directions = []
+    for i in range(len(result)):
+        floor_points = result[i]["points"]
+        for j in range(len(floor_points) - 1):
+            current = floor_points[j]
+            next_point = floor_points[j + 1]
+            prev_point = floor_points[j - 1] if j > 0 else None
+
+            dx = next_point["x"] - current["x"]
+            dy = next_point["y"] - current["y"]
+            angle = math.degrees(math.atan2(dy, dx))
+
+            if prev_point:
+                prev_dx = current["x"] - prev_point["x"]
+                prev_dy = current["y"] - prev_point["y"]
+                prev_angle = math.degrees(math.atan2(prev_dy, prev_dx))
+                turn_angle = (angle - prev_angle + 180) % 360 - 180
+                if -45 <= turn_angle <= 45:
+                    direction = "вперёд"
+                elif 45 < turn_angle <= 135:
+                    direction = "налево"
+                elif -135 <= turn_angle < -45:
+                    direction = "направо"
+                else:
+                    direction = "назад"
+            else:
+                direction = "вперёд" if abs(dx) > abs(dy) else "вперёд"
+
+            directions.append((current["vertex"], direction))
+
+    # Добавление инструкций с направлениями
+    for vertex, direction in directions:
+        instructions.append(f"При движении к {vertex} {direction}")
 
     logger.info(f"Маршрут успешно сформирован: путь={result}, вес={weight}, инструкции={instructions}")
     return {"path": result, "weight": weight, "instructions": instructions}
