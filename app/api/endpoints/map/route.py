@@ -67,12 +67,11 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 edge_data = graph.get_edge_data(vertex, next_vertex)
                 if edge_data.get("type") == "лестница":
                     prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
-                    if prev_floor != floor:  # Добавляем инструкцию только при реальном изменении этажа
-                        direction = "up" if floor > prev_floor else "down"
-                        instructions.append(f"Go {direction} via stairs from floor {prev_floor} to floor {floor}")
-                elif edge_data.get("type") == "дверь" and next_vertex.startswith("outdoor_"):
+                    direction = "up" if floor > prev_floor else "down"
+                    instructions.append(f"Go {direction} via stairs from floor {prev_floor} to floor {floor}")
+                elif edge_data.get("type") == "дверь" and "outdoor" in next_vertex:
                     instructions.append("Exit building through the door")
-                elif edge_data.get("type") == "дверь" and vertex.startswith("outdoor_"):
+                elif edge_data.get("type") == "дверь" and "outdoor" in vertex:
                     instructions.append("Enter building through the door")
                 elif edge_data.get("type") == "outdoor":
                     instructions.append("Follow the outdoor path")
@@ -117,7 +116,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         for instr in instructions:
             final_instructions.append(instr)
             if "via stairs" not in instr and "building" not in instr and "outdoor path" not in instr and direction_idx < len(directions):
-                final_instructions.append(f"then {directions[direction_idx]}")
+                final_instructions.append(f"Then {directions[direction_idx]}")
                 direction_idx += 1
         while direction_idx < len(directions):
             final_instructions.append(directions[direction_idx])

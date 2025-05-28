@@ -57,7 +57,7 @@ def filter_path(graph: Graph, path: List[str]) -> List[str]:
     i = 0
     while i < len(path):
         vertex = path[i]
-        # Пропускаем все точки, кроме комнат и фантомных точек переходов
+        # Пропускаем segment_X_start и segment_X_end
         if vertex.startswith("segment_") and (vertex.endswith("_start") or vertex.endswith("_end")):
             i += 1
             continue
@@ -65,12 +65,27 @@ def filter_path(graph: Graph, path: List[str]) -> List[str]:
         if vertex not in filtered_path:
             filtered_path.append(vertex)
 
-        # Полностью отображаем лестницы
+        # Полностью отображаем лестницы (включая _far)
         if i + 1 < len(path) and graph.get_edge_data(vertex, path[i + 1]).get("type") == "лестница":
             while i + 1 < len(path) and graph.get_edge_data(path[i], path[i + 1]).get("type") == "лестница":
                 i += 1
                 if path[i] not in filtered_path:
                     filtered_path.append(path[i])
+            # Проверяем наличие _far точек
+            if vertex.startswith("phantom_stair_") and not vertex.endswith("_far"):
+                far_vertex = vertex + "_far"
+                if far_vertex in path[i:]:
+                    idx = path[i:].index(far_vertex) + i
+                    if far_vertex not in filtered_path:
+                        filtered_path.append(far_vertex)
+                    # Добавляем соответствующую _far точку для пары
+                    next_vertex = path[idx + 1] if idx + 1 < len(path) else None
+                    if next_vertex and next_vertex.startswith("phantom_stair_") and not next_vertex.endswith("_far"):
+                        far_next = next_vertex + "_far"
+                        if far_next in path[idx:]:
+                            if far_next not in filtered_path:
+                                filtered_path.append(far_next)
+                    i = idx
 
         # Полностью отображаем уличные сегменты для "дверь-улица" или "улица-дверь"
         elif i + 1 < len(path) and graph.get_edge_data(vertex, path[i + 1]).get("type") == "дверь":
