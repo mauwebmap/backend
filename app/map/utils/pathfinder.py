@@ -1,6 +1,4 @@
 # app/map/utils/pathfinder.py
-from typing import List
-
 from .graph import Graph
 import heapq
 import math
@@ -57,6 +55,22 @@ def filter_path(graph: Graph, path: List[str]) -> List[str]:
     i = 0
     while i < len(path):
         vertex = path[i]
+        # Пропускаем segment_X_start и segment_X_end, если это не точка перехода
+        if vertex.startswith("segment_") and (vertex.endswith("_start") or vertex.endswith("_end")):
+            # Проверяем, является ли это точкой перехода (лестница или дверь)
+            is_transition = False
+            if i + 1 < len(path):
+                edge_type = graph.get_edge_data(vertex, path[i + 1]).get("type")
+                if edge_type in ["лестница", "дверь"]:
+                    is_transition = True
+            if i > 0:
+                edge_type = graph.get_edge_data(path[i - 1], vertex).get("type")
+                if edge_type in ["лестница", "дверь"]:
+                    is_transition = True
+            if not is_transition:
+                i += 1
+                continue
+
         if vertex not in filtered_path:
             filtered_path.append(vertex)
 
@@ -82,7 +96,6 @@ def filter_path(graph: Graph, path: List[str]) -> List[str]:
                     if outdoor_id is not None:
                         start_vertex = f"outdoor_{outdoor_id}_start"
                         end_vertex = f"outdoor_{outdoor_id}_end"
-                        # Убедимся, что обе точки уличного сегмента добавлены
                         if start_vertex in path[i:i+3] and end_vertex in path[i:i+3]:
                             if start_vertex not in filtered_path:
                                 filtered_path.append(start_vertex)

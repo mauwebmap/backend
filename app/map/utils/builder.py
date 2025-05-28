@@ -7,7 +7,6 @@ from app.map.models.connection import Connection
 from app.map.models.floor import Floor
 from sqlalchemy.orm import Session
 import math
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +86,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 phantom_vertex = f"phantom_room_{room.id}_segment_{conn.segment_id}"
                 floor = db.query(Floor).filter(Floor.id == room.floor_id).first()
                 floor_number = floor.floor_number if floor else room.floor_id
+                # Используем координаты комнаты для фантомной точки
                 graph.add_vertex(phantom_vertex, {"coords": (room.cab_x, room.cab_y, floor_number), "building_id": room.building_id})
                 weight = conn.weight if conn.weight else 2.0
+                # Соединяем с началом и концом сегмента, но это нужно для маршрута
                 graph.add_edge(room_vertex, phantom_vertex, weight, {"type": "phantom"})
                 graph.add_edge(phantom_vertex, segment_start, weight, {"type": "segment"})
                 graph.add_edge(phantom_vertex, segment_end, weight, {"type": "segment"})
@@ -105,6 +106,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             to_floor = floor_numbers[conn.to_segment_id]
             phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
             phantom_to = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
+            # Используем координаты начала/конца сегмента для лестниц
             from_coords = graph.get_vertex_data(from_end)["coords"]
             to_coords = graph.get_vertex_data(to_start)["coords"]
             graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
