@@ -1,239 +1,79 @@
-from app.database.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.map.utils.graph import Graph
+from app.database.database import get_db
+from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
-from app.map.models.room import Room
-from app.map.models.segment import Segment
-from app.map.models.outdoor_segment import OutdoorSegment
-from app.map.models.floor import Floor
-from app.map.models.connection import Connection
-from math import atan2, degrees, sqrt
 import logging
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
-def get_direction(prev_prev_coords: tuple, prev_coords: tuple, curr_coords: tuple, prev_direction: str = None,
-                  i: int = 0) -> str:
-    curr_dx = curr_coords[0] - prev_coords[0]
-    curr_dy = curr_coords[1] - prev_coords[1]
-    distance = sqrt(curr_dx ** 2 + curr_dy ** 2)
-    if distance < 15:
-        return "вперёд" if prev_direction in ["вперёд", None] else prev_direction
+@router.get("/route")
+async def get_route(start: str, end: str, db: Session = Depends(get_db)):
+    logger.info(f"Получен запрос на построение маршрута от {start} до {end}")
 
-    curr_angle = degrees(atan2(curr_dy, curr_dx))
-    curr_angle = ((curr_angle + 180) % 360) - 180
-    base_direction = "направо" if -45 <= curr_angle <= 45 else \
-                     "вперёд" if 45 < curr_angle <= 135 else \
-                     "налево" if 135 < curr_angle <= 180 or -180 <= curr_angle < -135 else "назад"
-
-    if prev_prev_coords is None:
-        return base_direction
-
-    prev_dx = prev_coords[0] - prev_prev_coords[0]
-    prev_dy = prev_coords[1] - prev_prev_coords[1]
-    if prev_dx == 0 and prev_dy == 0:
-        return base_direction
-
-    prev_angle = degrees(atan2(prev_dy, prev_dx))
-    prev_angle = ((prev_angle + 180) % 360) - 180
-
-    angle_diff = ((curr_angle - prev_angle + 180) % 360) - 180
-    if abs(angle_diff) < 15:
-        return "вперёд" if prev_direction in ["вперёд", None] else base_direction
-    return "поверните налево" if -180 < angle_diff <= -15 else "поверните направо"
-
-def get_vertex_details(vertex: str, db: Session) -> tuple:
-    vertex_type, vertex_id = vertex.split("_", 1)
-    if vertex_type == "room":
-        room = db.query(Room).filter(Room.id == int(vertex_id)).first()
-        return room.name, room.cab_id if room else (vertex, None)
-    elif vertex_type == "segment":
-        return "лестницы", None
-    elif vertex_type == "outdoor":
-        return f"Уличный сегмент {vertex_id}", None
-    elif vertex_type == "phantom":
-        parts = vertex_id.split("_")
-        room_id = parts[1]
-        room = db.query(Room).filter(Room.id == int(room_id)).first()
-        return f"Фантомная точка у {room.name if room else 'комнаты'}", None
-    return vertex, None
-
-def generate_text_instructions(path: list, graph: Graph, db: Session, view_floor: int = None) -> list:
-    instructions = []
-    prev_prev_coords = None
-    prev_coords = None
-    prev_vertex = None
-    prev_floor = None
-    current_instruction = []
-    last_turn = None
-
-    for i, vertex in enumerate(path):
-        vertex_data = graph.get_vertex_data(vertex)  # Используем новый метод для получения данных
-        coords = vertex_data["coords"]
-        floor_id = coords[2]
-        try:
-            floor = db.query(Floor).filter(Floor.id == floor_id).first()
-            if floor:
-                floor_number = floor.floor_number if floor_id != 1 else 1
-            else:
-                logger.warning(f"Floor with id {floor_id} not found, defaulting to 1")
-                floor_number = 1
-        except Exception as e:
-            logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
-            floor_number = 1
-
-        logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
-
-        if view_floor is not None and floor_number != view_floor and vertex.startswith("outdoor_"):
-            continue
-
-        vertex_name, vertex_number = get_vertex_details(vertex, db)
-
-        if i == 0:
-            current_instruction.append(f"При выходе из {vertex_name}")
-            prev_coords = (coords[0], coords[1])
-            prev_vertex = vertex
-            prev_floor = floor_number
-            continue
-
-        if prev_floor != floor_number and i > 1:
-            if current_instruction:
-                instructions.append(" ".join(current_instruction) if not last_turn else f"{current_instruction[0]} {last_turn}")
-                current_instruction = []
-            prev_segment_id = int(prev_vertex.split("_")[1]) if prev_vertex.startswith("segment_") else None
-            curr_segment_id = int(vertex.split("_")[1]) if vertex.startswith("segment_") else None
-            if prev_segment_id and curr_segment_id:
-                connection = db.query(Connection).filter(
-                    Connection.type == "лестница",
-                    ((Connection.from_segment_id == prev_segment_id) & (Connection.to_segment_id == curr_segment_id)) |
-                    ((Connection.from_segment_id == curr_segment_id) & (Connection.to_segment_id == prev_segment_id))
-                ).first()
-                if connection:
-                    instructions.append(f"Дойдите до лестницы и {'поднимитесь' if prev_floor < floor_number else 'спуститесь'} на {floor_number}-й этаж")
-            elif prev_floor != 1 and floor_number == 1:
-                instructions.append("Выйдите из здания на улицу")
-            elif prev_floor == 1 and floor_number != 1:
-                instructions.append(f"Войдите в здание и поднимитесь на {floor_number}-й этаж")
-            prev_prev_coords = None
-            last_turn = None
-
-        if prev_coords:
-            try:
-                direction = get_direction(prev_prev_coords, prev_coords, (coords[0], coords[1]), last_turn, i)
-                logger.info(f"Direction for {vertex}: {direction}")
-                if direction.startswith("поверните"):
-                    if last_turn and "поверните" in last_turn.lower():
-                        current_instruction[-1] = direction
-                    else:
-                        current_instruction.append(direction)
-                    last_turn = direction
-                elif direction != "вперёд" and not last_turn:
-                    current_instruction.append(direction)
-            except Exception as e:
-                logger.error(f"Error calculating direction for vertex {vertex}: {e}")
-                direction = "вперёд"
-                current_instruction.append(direction)
-
-        if i == len(path) - 1:
-            destination = f"{vertex_name} номер {vertex_number}" if vertex_number else vertex_name
-            current_instruction = [current_instruction[0] if current_instruction else ""] + \
-                                 ([last_turn] if last_turn and "поверните" in last_turn.lower() else []) + \
-                                 [f"пройдите вперёд до {destination}"]
-            instructions.append(" ".join(filter(None, current_instruction)))
-
-        prev_prev_coords = prev_coords
-        prev_coords = (coords[0], coords[1])
-        prev_floor = floor_number
-        prev_vertex = vertex
-
-    logger.info(f"Generated instructions: {instructions}")
-    return instructions
-
-def simplify_route(points: list) -> list:
-    if len(points) < 3:
-        return points
-    simplified = [points[0]]
-    for i in range(1, len(points) - 1):
-        prev_point = points[i - 1]
-        curr_point = points[i]
-        next_point = points[i + 1]
-        dx1, dy1 = curr_point["x"] - prev_point["x"], curr_point["y"] - prev_point["y"]
-        dx2, dy2 = next_point["x"] - curr_point["x"], next_point["y"] - curr_point["y"]
-
-        if "phantom" in curr_point.get("vertex", ""):
-            simplified.append(curr_point)
-            continue
-
-        if dx1 == 0 and dy1 == 0 or dx2 == 0 and dy2 == 0:
-            simplified.append(curr_point)
-            continue
-
-        angle = degrees(atan2(dx1 * dy2 - dx2 * dy1, dx1 * dx2 + dy1 * dy2))
-        angle = abs(((angle + 180) % 360) - 180)
-        if 30 <= angle <= 150:
-            simplified.append(curr_point)
-
-    simplified.append(points[-1])
-    return simplified
-
-@router.get("/route", response_model=dict)
-async def get_route(start: str, end: str, view_floor: int = None, db: Session = Depends(get_db)):
-    logger.info(f"Received request to find route from {start} to {end}")
+    logger.info("Начало построения графа")
     try:
-        path, weight, graph = find_path(db, start, end, return_graph=True)
-        logger.info(f"Pathfinding completed: path={path}, weight={weight}")
+        graph = build_graph(db, start, end)
+        logger.info("Граф успешно построен")
     except Exception as e:
-        logger.error(f"Error during pathfinding: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка при поиске пути: {e}")
+        logger.info(f"Ошибка при построении графа: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при построении графа: {str(e)}")
+
+    logger.info(f"Начало поиска пути от {start} до {end}")
+    try:
+        path, weight = find_path(graph, start, end)
+        logger.info(f"Поиск пути завершён: путь={path}, вес={weight}")
+    except Exception as e:
+        logger.info(f"Ошибка при поиске пути: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при поиске пути: {str(e)}")
 
     if not path:
-        logger.warning(f"No path found from {start} to {end}")
-        raise HTTPException(status_code=404, detail="Маршрут не найден")
+        logger.info(f"Путь от {start} до {end} не найден")
+        raise HTTPException(status_code=404, detail="Путь не найден")
 
-    logger.info(f"Path: {path}, Weight: {weight}")
-    try:
-        instructions = generate_text_instructions(path, graph, db, view_floor)
-    except Exception as e:
-        logger.error(f"Error generating instructions: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка при генерации инструкций: {e}")
-
-    route = []
-    current_floor_number = None
+    # Формируем маршрут с этажами и улучшенными инструкциями
+    result = []
+    current_floor = None
     floor_points = []
+    instructions = []
 
     for i, vertex in enumerate(path):
-        vertex_data = graph.get_vertex_data(vertex)  # Используем новый метод
-        coords = vertex_data["coords"]
-        floor_id = coords[2]
-        try:
-            floor = db.query(Floor).filter(Floor.id == floor_id).first()
-            if floor:
-                floor_number = floor.floor_number if floor_id != 1 else 1
-            else:
-                logger.warning(f"Floor with id {floor_id} not found, defaulting to 1")
-                floor_number = 1
-        except Exception as e:
-            logger.error(f"Error retrieving floor for floor_id {floor_id}: {e}")
-            floor_number = 1
+        vertex_data = graph.get_vertex_data(vertex)
+        floor = vertex_data["coords"][2]
+        x, y = vertex_data["coords"][0], vertex_data["coords"][1]
 
-        logger.info(f"Processing vertex {vertex}, coords={coords}, floor={floor_number}")
-        point = {"x": coords[0], "y": coords[1], "vertex": vertex}
-        if current_floor_number is None:
-            current_floor_number = floor_number
-            floor_points.append(point)
-        elif floor_number != current_floor_number:
+        # Инструкции для лестниц и переходов
+        if i < len(path) - 1:
+            next_vertex = path[i + 1]
+            neighbors = graph.get_neighbors(vertex)
+            edge_data = {}
+            for neighbor, weight, data in neighbors:
+                if neighbor == next_vertex:
+                    edge_data = data
+                    break
+            if edge_data:
+                if edge_data.get("type") == "лестница":
+                    prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
+                    direction = "up" if floor > prev_floor else "down"
+                    instructions.append(f"Go {direction} from floor {prev_floor} to floor {floor} via {vertex}")
+                elif edge_data.get("type") == "дверь" and "outdoor" in next_vertex:
+                    instructions.append(f"Exit building via {vertex} to outdoor")
+                elif edge_data.get("type") == "улица" and "outdoor" in vertex and "segment" in next_vertex:
+                    instructions.append(f"Follow outdoor path from {vertex} to building entry")
+                elif edge_data.get("type") == "дверь" and "segment" in vertex and "outdoor" in next_vertex:
+                    instructions.append(f"Enter building from outdoor via {next_vertex}")
+
+        if floor != current_floor:
             if floor_points:
-                route.append({"floor": current_floor_number, "points": simplify_route(floor_points)})
-            floor_points = [point]
-            current_floor_number = floor_number
-        else:
-            floor_points.append(point)
+                result.append({"floor": current_floor, "points": floor_points})
+            floor_points = []
+            current_floor = floor
+
+        floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
 
     if floor_points:
-        route.append({"floor": current_floor_number, "points": simplify_route(floor_points)})
+        result.append({"floor": current_floor, "points": floor_points})
 
-    logger.info(f"Generated route: {route}")
-    return {"path": route, "weight": weight, "instructions": instructions}
+    logger.info(f"Маршрут успешно сформирован: путь={result}, вес={weight}, инструкции={instructions}")
+    return {"path": result, "weight": weight, "instructions": instructions}

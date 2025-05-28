@@ -1,114 +1,71 @@
-# backend/app/map/utils/pathfinder.py
-from heapq import heappush, heappop
-from math import sqrt
 from .graph import Graph
-from .builder import build_graph
+import heapq
+import math
 import logging
 
 logger = logging.getLogger(__name__)
 
-def heuristic(current: tuple, goal: tuple) -> float:
-    x1, y1, floor_id1 = current
-    x2, y2, floor_id2 = goal
-    distance = sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-    floor_cost = abs(floor_id1 - floor_id2) * 30 if floor_id1 != floor_id2 else 0
-    return distance + floor_cost
+def heuristic(vertex1: str, vertex2: str, graph: Graph) -> float:
+    coords1 = graph.get_vertex_data(vertex1)["coords"]
+    coords2 = graph.get_vertex_data(vertex2)["coords"]
+    floor_diff = abs(coords1[2] - coords2[2]) * 10
+    distance_2d = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
+    # Найти ближайшую лестницу к целевой вершине
+    target_floor = coords2[2]
+    ladder_vertices = [v for v in graph.vertices if "stair" in v.lower() or (graph.get_neighbors(v) and any(edge[2].get("type") == "лестница" for edge in graph.get_neighbors(v)))]
+    if ladder_vertices:
+        target_ladder = min(ladder_vertices, key=lambda v: math.sqrt((graph.get_vertex_data(v)["coords"][0] - coords2[0])**2 + (graph.get_vertex_data(v)["coords"][1] - coords2[1])**2) if graph.get_vertex_data(v)["coords"][2] == target_floor else float('inf'), default=vertex2)
+        ladder_dist = math.sqrt((coords1[0] - graph.get_vertex_data(target_ladder)["coords"][0])**2 + (coords1[1] - graph.get_vertex_data(target_ladder)["coords"][1])**2)
+        return distance_2d + floor_diff + ladder_dist * 0.5  # Увеличиваем влияние расстояния до лестницы
+    return distance_2d + floor_diff
 
-def find_path(db, start: str, end: str, return_graph=False):
-    logger.info(f"Starting pathfinding from {start} to {end}")
-    try:
-        graph = build_graph(db, start, end)
-        logger.info(f"Graph built with {len(graph.vertices)} vertices")
-    except Exception as e:
-        logger.error(f"Failed to build graph: {e}")
-        return [], float('inf'), graph if return_graph else []
+def find_path(graph: Graph, start: str, end: str) -> tuple:
+    logger.info(f"Начало поиска пути от {start} до {end}")
 
-    if start not in graph.vertices or end not in graph.vertices:
-        logger.warning(f"Start {start} or end {end} not in graph vertices")
-        return [], float('inf'), graph if return_graph else []
-
-    # Извлекаем данные о стартовой и конечной точках
-    start_data = graph.get_vertex_data(start)
-    end_data = graph.get_vertex_data(end)
-    start_building = start_data["building_id"]
-    end_building = end_data["building_id"]
-    start_coords = start_data["coords"]
-    end_coords = end_data["coords"]
-
-    open_set = [(0, start)]
+    open_set = [(0, start, [start])]
+    heapq.heapify(open_set)
+    g_scores = {start: 0}
+    f_scores = {start: heuristic(start, end, graph)}
     came_from = {}
-    g_score = {start: 0}
-    f_score = {start: heuristic(start_coords, end_coords)}
-    processed_vertices = set()
+    visited = set()
+    iteration = 0
+    max_iterations = 20000
 
-    logger.info(f"Starting A* search with initial open_set: {open_set}")
-    while open_set:
-        current_f, current = heappop(open_set)
-        logger.debug(f"Processing vertex: {current}, f_score={current_f}")
-
-        if current in processed_vertices:
-            continue
-        processed_vertices.add(current)
+    while open_set and iteration < max_iterations:
+        f_score, current, path = heapq.heappop(open_set)
+        logger.info(f"Итерация {iteration}: обработка вершины {current}, f_score={f_score}, g_score={g_scores[current]}")
 
         if current == end:
-            path = []
-            while current in came_from:
-                path.append(current)
-                current = came_from[current]
-            path.append(start)
-            path.reverse()
+            logger.info(f"Путь найден: {path}, вес={g_scores[current]}")
+            return path, g_scores[current]
 
-            weight = g_score[end]
-            logger.info(f"Path found: {path}, weight={weight}")
-
-            # Формируем маршрут с этажами
-            route = []
-            current_floor = None
-            points = []
-            for i, vertex in enumerate(path):
-                vertex_data = graph.get_vertex_data(vertex)
-                floor_id = vertex_data["coords"][2]
-                floor_number = 1 if vertex_data["building_id"] is None else floor_id  # outdoor = 1, else floor_id
-
-                if i == 0:
-                    current_floor = floor_number
-                    points.append({"x": vertex_data["coords"][0], "y": vertex_data["coords"][1], "vertex": vertex})
-                elif floor_number != current_floor or i == len(path) - 1:
-                    if points:
-                        route.append({"floor": current_floor, "points": points})
-                    current_floor = floor_number
-                    points = [{"x": vertex_data["coords"][0], "y": vertex_data["coords"][1], "vertex": vertex}]
-                else:
-                    points.append({"x": vertex_data["coords"][0], "y": vertex_data["coords"][1], "vertex": vertex})
-
-            if points:
-                route.append({"floor": current_floor, "points": points})
-
-            # Исключаем outdoor, если здания одинаковые
-            if start_building == end_building and start_building is not None:
-                route = [segment for segment in route if not any("outdoor" in p["vertex"] for p in segment["points"])]
-
-            logger.info(f"Generated route structure: {route}")  # Добавляем отладочный лог
-            logger.info(f"Pathfinding completed: path={path}, weight={weight}")
-            return path, weight, graph if return_graph else route
-
-        try:
-            for neighbor, weight, _ in graph.get_neighbors(current):
-                neighbor_data = graph.get_vertex_data(neighbor)
-                # Пропускаем outdoor вершины, если здания одинаковые
-                if start_building == end_building and start_building is not None and neighbor_data["building_id"] is None:
-                    continue
-
-                tentative_g_score = g_score[current] + weight
-                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-                    came_from[neighbor] = current
-                    g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + heuristic(neighbor_data["coords"], end_coords)
-                    heappush(open_set, (f_score[neighbor], neighbor))
-                    logger.debug(f"Added to open_set: {neighbor}, f_score={f_score[neighbor]}")
-        except Exception as e:
-            logger.error(f"Error processing neighbor for vertex {current}: {e}")
+        if current in visited:
             continue
 
-    logger.warning(f"No path found from {start} to {end}")
-    return [], float('inf'), graph if return_graph else []
+        visited.add(current)
+        neighbors = graph.get_neighbors(current)
+        logger.info(f"Соседи вершины {current}: {[(n, w) for n, w, _ in neighbors]}")
+
+        for neighbor, weight, edge_data in neighbors:
+            if neighbor in visited:
+                continue
+
+            logger.info(f"Рассматривается сосед: {neighbor}, вес={weight}")
+            tentative_g_score = g_scores[current] + weight
+            if weight <= 0:
+                logger.warning(f"Обнаружен вес <= 0 для ребра {current} -> {neighbor}, заменяем на 0.1")
+                weight = 0.1
+                tentative_g_score = g_scores[current] + weight
+
+            if neighbor not in g_scores or tentative_g_score < g_scores[neighbor]:
+                came_from[neighbor] = current
+                g_scores[neighbor] = tentative_g_score
+                f_scores[neighbor] = tentative_g_score + heuristic(neighbor, end, graph)
+                new_path = path + [neighbor]
+                logger.info(f"Обновлён сосед: {neighbor}, новый g_score={tentative_g_score}, новый f_score={f_scores[neighbor]}")
+                heapq.heappush(open_set, (f_scores[neighbor], neighbor, new_path))
+
+        iteration += 1
+
+    logger.info(f"Путь от {start} до {end} не найден в течение {max_iterations} итераций. Обработано вершин: {len(visited)}")
+    return [], float("inf")
