@@ -72,16 +72,17 @@ def filter_path(graph: Graph, path: List[str]) -> List[str]:
             next_vertex = path[i + 1]
             if i + 2 < len(path):
                 next_next_vertex = path[i + 2]
-                if "outdoor" in next_vertex or graph.get_edge_data(next_vertex, next_next_vertex).get("type") == "улица":
-                    # Извлекаем outdoor_id только для вершин с "outdoor"
+                if graph.get_edge_data(vertex, next_vertex).get("type") == "дверь":
+                    # Проверяем, что вершина действительно начинается с 'outdoor_'
                     outdoor_id = None
-                    if "outdoor" in next_vertex:
+                    if next_vertex.startswith("outdoor_"):
                         outdoor_id = int(next_vertex.split("_")[1])
-                    elif "outdoor" in next_next_vertex:
+                    elif next_next_vertex.startswith("outdoor_"):
                         outdoor_id = int(next_next_vertex.split("_")[1])
                     if outdoor_id is not None:
                         start_vertex = f"outdoor_{outdoor_id}_start"
                         end_vertex = f"outdoor_{outdoor_id}_end"
+                        # Убедимся, что обе точки уличного сегмента добавлены
                         if start_vertex in path[i:i+3] and end_vertex in path[i:i+3]:
                             if start_vertex not in filtered_path:
                                 filtered_path.append(start_vertex)
