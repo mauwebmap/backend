@@ -102,6 +102,7 @@ def filter_path(graph: Graph, path: List[str]) -> List[str]:
                         start_vertex = f"outdoor_{outdoor_id}_start"
                         end_vertex = f"outdoor_{outdoor_id}_end"
                         if start_vertex in path[i:i+3] and end_vertex in path[i:i+3]:
+                            # Добавляем только начальную и конечную точки уличного сегмента
                             if start_vertex not in filtered_path:
                                 filtered_path.append(start_vertex)
                             if end_vertex not in filtered_path:

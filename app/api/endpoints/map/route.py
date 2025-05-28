@@ -68,13 +68,13 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 if edge_data.get("type") == "лестница":
                     prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
                     direction = "up" if floor > prev_floor else "down"
-                    instructions.append(f"Go {direction} via stairs from floor {prev_floor} to floor {floor}")
-                elif edge_data.get("type") == "дверь" and "outdoor" in next_vertex:
-                    instructions.append("Exit building through the door")
-                elif edge_data.get("type") == "дверь" and "outdoor" in vertex:
-                    instructions.append("Enter building through the door")
-                elif edge_data.get("type") == "outdoor":
-                    instructions.append("Follow the outdoor path")
+                    if not any("stairs" in instr.lower() for instr in instructions[-2:]):  # Избегаем дублирования
+                        instructions.append(f"Go {direction} via stairs from floor {prev_floor} to floor {floor}")
+                elif edge_data.get("type") == "дверь":
+                    if "outdoor" in next_vertex and not any("exit" in instr.lower() for instr in instructions[-2:]):
+                        instructions.append("Exit building through the door")
+                    elif "outdoor" in vertex and not any("enter" in instr.lower() for instr in instructions[-2:]):
+                        instructions.append("Enter building through the door")
 
         if floor_points:
             result.append({"floor": current_floor, "points": floor_points})
@@ -115,7 +115,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         final_instructions = []
         for instr in instructions:
             final_instructions.append(instr)
-            if "via stairs" not in instr and "building" not in instr and "outdoor path" not in instr and direction_idx < len(directions):
+            if "via stairs" not in instr and "building" not in instr and direction_idx < len(directions):
                 final_instructions.append(f"Then {directions[direction_idx]}")
                 direction_idx += 1
         while direction_idx < len(directions):

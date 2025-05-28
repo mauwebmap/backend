@@ -120,7 +120,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             to_start, to_end = segments[conn.to_segment_id]
             from_floor = floor_numbers[conn.from_segment_id]
             to_floor = floor_numbers[conn.to_segment_id]
-            # Первая фантомная точка — как есть (координаты лестницы)
+            # Первая фантомная точка — координаты лестницы
             phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
             phantom_to = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
             # Вторая фантомная точка — дальше от сегмента
@@ -130,7 +130,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
             if from_segment and to_segment:
-                # Определяем координаты для первой точки (как есть)
+                # Координаты первой точки (как есть)
                 if from_segment.start_x == from_segment.end_x:  # Вертикальный сегмент
                     x = from_segment.start_x
                     y = to_segment.start_y if abs(to_segment.start_y - from_segment.start_y) < abs(to_segment.end_y - from_segment.start_y) else to_segment.end_y
@@ -141,15 +141,19 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 to_coords = (x, y, to_floor)
                 graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
                 graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
-                # Определяем координаты для второй точки (дальше от сегмента)
-                start_dist = math.sqrt((from_segment.start_x - x) ** 2 + (from_segment.start_y - y) ** 2)
-                end_dist = math.sqrt((from_segment.end_x - x) ** 2 + (from_segment.end_y - y) ** 2)
-                if start_dist > end_dist:
-                    far_coords_from = (from_segment.start_x, from_segment.start_y, from_floor)
-                    far_coords_to = (to_segment.start_x, to_segment.start_y, to_floor)
-                else:
-                    far_coords_from = (from_segment.end_x, from_segment.end_y, from_floor)
-                    far_coords_to = (to_segment.end_x, to_segment.end_y, to_floor)
+                # Координаты второй точки (дальше от сегмента)
+                from_start_coords = graph.get_vertex_data(from_start)["coords"]
+                from_end_coords = graph.get_vertex_data(from_end)["coords"]
+                to_start_coords = graph.get_vertex_data(to_start)["coords"]
+                to_end_coords = graph.get_vertex_data(to_end)["coords"]
+                # Выбираем дальнюю точку для from_segment
+                dist_start = math.sqrt((from_start_coords[0] - x) ** 2 + (from_start_coords[1] - y) ** 2)
+                dist_end = math.sqrt((from_end_coords[0] - x) ** 2 + (from_end_coords[1] - y) ** 2)
+                far_coords_from = from_end_coords if dist_end > dist_start else from_start_coords
+                # Выбираем дальнюю точку для to_segment
+                dist_start_to = math.sqrt((to_start_coords[0] - x) ** 2 + (to_start_coords[1] - y) ** 2)
+                dist_end_to = math.sqrt((to_end_coords[0] - x) ** 2 + (to_end_coords[1] - y) ** 2)
+                far_coords_to = to_end_coords if dist_end_to > dist_start_to else to_start_coords
                 graph.add_vertex(phantom_from_far, {"coords": far_coords_from, "building_id": None})
                 graph.add_vertex(phantom_to_far, {"coords": far_coords_to, "building_id": None})
                 # Соединяем точки
