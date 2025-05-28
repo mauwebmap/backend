@@ -51,6 +51,18 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             x, y = vertex_data["coords"][0], vertex_data["coords"][1]
             logger.debug(f"Вершина {vertex}: floor={floor}, x={x}, y={y}")
 
+            # Включаем все вершины: комнаты, лестницы, фантомные точки перед комнатами, уличные точки
+            if (vertex.startswith("room_") or vertex.startswith("phantom_stair_") or
+                (vertex.startswith("phantom_") and "segment" in vertex) or
+                vertex.startswith("outdoor_")):
+                if floor != current_floor:
+                    if floor_points:
+                        result.append({"floor": current_floor, "points": floor_points})
+                        logger.debug(f"Добавлен этаж {current_floor} с точками: {floor_points}")
+                    floor_points = []
+                    current_floor = floor
+                floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
+
             if i < len(path) - 1:
                 next_vertex = path[i + 1]
                 neighbors = graph.get_neighbors(vertex)
@@ -64,17 +76,6 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         instructions.append(f"Exit building via {vertex}")
                     elif edge_data.get("type") == "дверь" and next_vertex.startswith("outdoor_"):
                         instructions.append(f"Enter building via {next_vertex}")
-
-            # Фильтрация вершин: добавляем только ключевые точки
-            if vertex.startswith("room_") or vertex.startswith("outdoor_") or \
-               (vertex.startswith("phantom_") and "segment" in vertex and i == len(path) - 2):
-                if floor != current_floor:
-                    if floor_points:
-                        result.append({"floor": current_floor, "points": floor_points})
-                        logger.debug(f"Добавлен этаж {current_floor} с точками: {floor_points}")
-                    floor_points = []
-                    current_floor = floor
-                floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
 
         if floor_points:
             result.append({"floor": current_floor, "points": floor_points})
