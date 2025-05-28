@@ -1,71 +1,85 @@
-from .graph import Graph
 import heapq
-import math
 import logging
+from app.map.graph import Graph
 
 logger = logging.getLogger(__name__)
 
-def heuristic(vertex1: str, vertex2: str, graph: Graph) -> float:
-    coords1 = graph.get_vertex_data(vertex1)["coords"]
-    coords2 = graph.get_vertex_data(vertex2)["coords"]
-    floor_diff = abs(coords1[2] - coords2[2]) * 10
-    distance_2d = math.sqrt((coords1[0] - coords2[0]) ** 2 + (coords1[1] - coords2[1]) ** 2)
-    # Найти ближайшую лестницу к целевой вершине
-    target_floor = coords2[2]
-    ladder_vertices = [v for v in graph.vertices if "stair" in v.lower() or (graph.get_neighbors(v) and any(edge[2].get("type") == "лестница" for edge in graph.get_neighbors(v)))]
-    if ladder_vertices:
-        target_ladder = min(ladder_vertices, key=lambda v: math.sqrt((graph.get_vertex_data(v)["coords"][0] - coords2[0])**2 + (graph.get_vertex_data(v)["coords"][1] - coords2[1])**2) if graph.get_vertex_data(v)["coords"][2] == target_floor else float('inf'), default=vertex2)
-        ladder_dist = math.sqrt((coords1[0] - graph.get_vertex_data(target_ladder)["coords"][0])**2 + (coords1[1] - graph.get_vertex_data(target_ladder)["coords"][1])**2)
-        return distance_2d + floor_diff + ladder_dist * 0.5  # Увеличиваем влияние расстояния до лестницы
-    return distance_2d + floor_diff
 
-def find_path(graph: Graph, start: str, end: str) -> tuple:
+def heuristic(a, b, graph):
+    """Оценочная функция для A* (евклидово расстояние)."""
+    coords_a = graph.get_vertex_data(a)["coords"]
+    coords_b = graph.get_vertex_data(b)["coords"]
+    x1, y1, _ = coords_a
+    x2, y2, _ = coords_b
+    return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+
+
+def find_path(graph, start, end):
     logger.info(f"Начало поиска пути от {start} до {end}")
 
-    open_set = [(0, start, [start])]
-    heapq.heapify(open_set)
-    g_scores = {start: 0}
-    f_scores = {start: heuristic(start, end, graph)}
-    came_from = {}
-    visited = set()
-    iteration = 0
-    max_iterations = 20000
+    if start not in graph.vertices or end not in graph.vertices:
+        logger.error(f"Вершина {start} или {end} не найдена в графе")
+        return None, float('inf')
 
-    while open_set and iteration < max_iterations:
-        f_score, current, path = heapq.heappop(open_set)
-        logger.info(f"Итерация {iteration}: обработка вершины {current}, f_score={f_score}, g_score={g_scores[current]}")
+    # Инициализация
+    open_set = [(0, start)]
+    came_from = {}
+    g_score = {start: 0}
+    f_score = {start: heuristic(start, end, graph)}
+    closed_set = set()
+
+    while open_set:
+        current_f, current = heapq.heappop(open_set)
 
         if current == end:
-            logger.info(f"Путь найден: {path}, вес={g_scores[current]}")
-            return path, g_scores[current]
+            logger.info(f"Путь найден от {start} до {end}")
+            return reconstruct_path(came_from, current), g_score[current]
 
-        if current in visited:
+        if current in closed_set:
             continue
 
-        visited.add(current)
-        neighbors = graph.get_neighbors(current)
-        logger.info(f"Соседи вершины {current}: {[(n, w) for n, w, _ in neighbors]}")
+        closed_set.add(current)
 
-        for neighbor, weight, edge_data in neighbors:
-            if neighbor in visited:
+        for neighbor, weight, _ in graph.get_neighbors(current):
+            if neighbor in closed_set:
                 continue
 
-            logger.info(f"Рассматривается сосед: {neighbor}, вес={weight}")
-            tentative_g_score = g_scores[current] + weight
-            if weight <= 0:
-                logger.warning(f"Обнаружен вес <= 0 для ребра {current} -> {neighbor}, заменяем на 0.1")
-                weight = 0.1
-                tentative_g_score = g_scores[current] + weight
+            tentative_g_score = g_score[current] + weight
 
-            if neighbor not in g_scores or tentative_g_score < g_scores[neighbor]:
+            if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
-                g_scores[neighbor] = tentative_g_score
-                f_scores[neighbor] = tentative_g_score + heuristic(neighbor, end, graph)
-                new_path = path + [neighbor]
-                logger.info(f"Обновлён сосед: {neighbor}, новый g_score={tentative_g_score}, новый f_score={f_scores[neighbor]}")
-                heapq.heappush(open_set, (f_scores[neighbor], neighbor, new_path))
+                g_score[neighbor] = tentative_g_score
+                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end, graph)
+                heapq.heappush(open_set, (f_score[neighbor], neighbor))
 
-        iteration += 1
+    logger.warning(f"Путь от {start} до {end} не найден")
+    return None, float('inf')
 
-    logger.info(f"Путь от {start} до {end} не найден в течение {max_iterations} итераций. Обработано вершин: {len(visited)}")
-    return [], float("inf")
+
+def reconstruct_path(came_from, current):
+    """Восстановление пути и фильтрация лишних вершин."""
+    path = [current]
+    while current in came_from:
+        current = came_from[current]
+        path.append(current)
+    path.reverse()
+
+    # Фильтрация пути: удаляем лишние end вершины, если они не связаны с переходами
+    filtered_path = []
+    for i, vertex in enumerate(path):
+        if not vertex.endswith("_end") or i == len(path) - 1:
+            filtered_path.append(vertex)
+            continue
+
+        # Проверяем, является ли предыдущая или следующая вершина частью перехода
+        prev_vertex = path[i - 1] if i > 0 else None
+        next_vertex = path[i + 1] if i < len(path) - 1 else None
+        is_transition = (prev_vertex and prev_vertex.startswith("phantom_segment")) or \
+                        (next_vertex and next_vertex.startswith("phantom_segment")) or \
+                        (prev_vertex and prev_vertex.startswith("phantom_stair")) or \
+                        (next_vertex and next_vertex.startswith("phantom_stair"))
+
+        if is_transition:
+            filtered_path.append(vertex)
+
+    return filtered_path
