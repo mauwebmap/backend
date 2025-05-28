@@ -1,85 +1,87 @@
+# app/map/utils/pathfinder.py
+from typing import List
+
+from .graph import Graph
 import heapq
+import math
 import logging
-from app.map.graph import Graph
 
 logger = logging.getLogger(__name__)
 
-
-def heuristic(a, b, graph):
-    """Оценочная функция для A* (евклидово расстояние)."""
-    coords_a = graph.get_vertex_data(a)["coords"]
-    coords_b = graph.get_vertex_data(b)["coords"]
-    x1, y1, _ = coords_a
-    x2, y2, _ = coords_b
-    return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
-
-
-def find_path(graph, start, end):
+def find_path(graph: Graph, start: str, end: str) -> tuple:
     logger.info(f"Начало поиска пути от {start} до {end}")
 
     if start not in graph.vertices or end not in graph.vertices:
         logger.error(f"Вершина {start} или {end} не найдена в графе")
-        return None, float('inf')
+        return [], float("inf")
 
-    # Инициализация
     open_set = [(0, start)]
     came_from = {}
-    g_score = {start: 0}
-    f_score = {start: heuristic(start, end, graph)}
-    closed_set = set()
+    g_scores = {start: 0}
+    f_scores = {start: graph.heuristic(start, end)}
+    visited = set()
 
     while open_set:
-        current_f, current = heapq.heappop(open_set)
+        f_score, current = heapq.heappop(open_set)
 
         if current == end:
-            logger.info(f"Путь найден от {start} до {end}")
-            return reconstruct_path(came_from, current), g_score[current]
+            path = []
+            while current in came_from:
+                path.append(current)
+                current = came_from[current]
+            path.append(start)
+            path.reverse()
+            logger.info(f"Путь найден: {path}, вес={g_scores[end]}")
+            return filter_path(graph, path), g_scores[end]
 
-        if current in closed_set:
+        if current in visited:
             continue
 
-        closed_set.add(current)
-
-        for neighbor, weight, _ in graph.get_neighbors(current):
-            if neighbor in closed_set:
+        visited.add(current)
+        for neighbor, weight, edge_data in graph.get_neighbors(current):
+            if neighbor in visited:
                 continue
 
-            tentative_g_score = g_score[current] + weight
-
-            if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+            tentative_g_score = g_scores[current] + weight
+            if neighbor not in g_scores or tentative_g_score < g_scores[neighbor]:
                 came_from[neighbor] = current
-                g_score[neighbor] = tentative_g_score
-                f_score[neighbor] = tentative_g_score + heuristic(neighbor, end, graph)
-                heapq.heappush(open_set, (f_score[neighbor], neighbor))
+                g_scores[neighbor] = tentative_g_score
+                f_scores[neighbor] = tentative_g_score + graph.heuristic(neighbor, end)
+                heapq.heappush(open_set, (f_scores[neighbor], neighbor))
 
-    logger.warning(f"Путь от {start} до {end} не найден")
-    return None, float('inf')
+    logger.info(f"Путь от {start} до {end} не найден")
+    return [], float("inf")
 
-
-def reconstruct_path(came_from, current):
-    """Восстановление пути и фильтрация лишних вершин."""
-    path = [current]
-    while current in came_from:
-        current = came_from[current]
-        path.append(current)
-    path.reverse()
-
-    # Фильтрация пути: удаляем лишние end вершины, если они не связаны с переходами
+def filter_path(graph: Graph, path: List[str]) -> List[str]:
     filtered_path = []
-    for i, vertex in enumerate(path):
-        if not vertex.endswith("_end") or i == len(path) - 1:
-            filtered_path.append(vertex)
-            continue
+    i = 0
+    while i < len(path):
+        vertex = path[i]
+        filtered_path.append(vertex)
 
-        # Проверяем, является ли предыдущая или следующая вершина частью перехода
-        prev_vertex = path[i - 1] if i > 0 else None
-        next_vertex = path[i + 1] if i < len(path) - 1 else None
-        is_transition = (prev_vertex and prev_vertex.startswith("phantom_segment")) or \
-                        (next_vertex and next_vertex.startswith("phantom_segment")) or \
-                        (prev_vertex and prev_vertex.startswith("phantom_stair")) or \
-                        (next_vertex and next_vertex.startswith("phantom_stair"))
+        # Полностью отображаем лестницы
+        if i + 1 < len(path) and graph.get_edge_data(vertex, path[i + 1]).get("type") == "лестница":
+            while i + 1 < len(path) and graph.get_edge_data(path[i], path[i + 1]).get("type") == "лестница":
+                i += 1
+                filtered_path.append(path[i])
 
-        if is_transition:
-            filtered_path.append(vertex)
+        # Полностью отображаем уличные сегменты для "дверь-улица" или "улица-дверь"
+        elif i + 1 < len(path) and graph.get_edge_data(vertex, path[i + 1]).get("type") == "дверь":
+            next_vertex = path[i + 1]
+            if i + 2 < len(path) and ("outdoor" in next_vertex or graph.get_edge_data(next_vertex, path[i + 2]).get("type") == "улица"):
+                outdoor_id = int(next_vertex.split("_")[1]) if "outdoor" in next_vertex else int(path[i + 2].split("_")[1])
+                start_vertex, end_vertex = f"outdoor_{outdoor_id}_start", f"outdoor_{outdoor_id}_end"
+                if start_vertex in path[i:i+3] and end_vertex in path[i:i+3]:
+                    if start_vertex not in filtered_path:
+                        filtered_path.append(start_vertex)
+                    if end_vertex not in filtered_path:
+                        filtered_path.append(end_vertex)
+                    i += 2
+                else:
+                    i += 1
+            else:
+                i += 1
+        else:
+            i += 1
 
     return filtered_path

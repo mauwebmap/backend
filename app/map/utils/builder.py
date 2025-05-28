@@ -1,96 +1,149 @@
+# app/map/utils/builder.py
+from .graph import Graph
+from app.map.models.room import Room
+from app.map.models.segment import Segment
+from app.map.models.outdoor_segment import OutdoorSegment
+from app.map.models.connection import Connection
+from app.map.models.floor import Floor
+from sqlalchemy.orm import Session
+import math
 import logging
-from app.database.models import Vertex, Edge
-from app.map.graph import Graph
 
 logger = logging.getLogger(__name__)
 
-
-def build_graph(db, start_vertex, end_vertex):
-    logger.info(f"Начало построения графа для start={start_vertex}, end={end_vertex}")
-
+def build_graph(db: Session, start: str, end: str) -> Graph:
+    logger.info(f"Начало построения графа для start={start}, end={end}")
     graph = Graph()
 
-    # Получаем этажи и здания для начальной и конечной вершины
-    start_data = db.query(Vertex).filter(Vertex.name == start_vertex).first()
-    end_data = db.query(Vertex).filter(Vertex.name == end_vertex).first()
+    # Проверка начальной и конечной комнаты
+    try:
+        start_id = int(start.replace("room_", ""))
+        end_id = int(end.replace("room_", ""))
+        start_room = db.query(Room).filter(Room.id == start_id).first()
+        end_room = db.query(Room).filter(Room.id == end_id).first()
+        if not start_room or not end_room:
+            logger.error(f"Комната с id {start_id} или {end_id} не найдена")
+            raise ValueError(f"Комната с id {start_id} или {end_id} не найдена")
+    except ValueError as e:
+        logger.error(f"Ошибка при парсинге ID комнат из {start} или {end}: {e}")
+        raise ValueError(f"Неверный формат комнаты, ожидается room_<id>, получено {start} или {end}")
 
-    if not start_data or not end_data:
-        raise ValueError(f"Вершина {start_vertex} или {end_vertex} не найдена в базе данных")
+    # Получение этажей
+    start_floor = db.query(Floor).filter(Floor.id == start_room.floor_id).first()
+    end_floor = db.query(Floor).filter(Floor.id == end_room.floor_id).first()
+    start_floor_number = start_floor.floor_number if start_floor else start_room.floor_id
+    end_floor_number = end_floor.floor_number if end_floor else end_room.floor_id
+    building_ids = {start_room.building_id, end_room.building_id} - {None}
+    floor_ids = {start_room.floor_id, end_room.floor_id}
+    logger.info(f"Актуальные ID зданий: {building_ids}, этажей: {floor_ids}")
 
-    start_floor = start_data.floor_id
-    end_floor = end_data.floor_id
-    logger.info(f"Назначен номер этажа: {start_vertex}={start_floor}, {end_vertex}={end_floor}")
+    # Добавление комнат
+    rooms = db.query(Room).filter(Room.building_id.in_(building_ids)).all()
+    for room in rooms:
+        floor = db.query(Floor).filter(Floor.id == room.floor_id).first()
+        floor_number = floor.floor_number if floor else room.floor_id
+        vertex = f"room_{room.id}"
+        graph.add_vertex(vertex, {"coords": (room.cab_x, room.cab_y, floor_number), "building_id": room.building_id})
 
-    building_ids = {start_data.building_id, end_data.building_id}
-    floor_ids = {start_floor, end_floor}
-    logger.info(f"Актуальные ID зданий: {building_ids}")
-    logger.info(f"Актуальные ID этажей: {floor_ids}")
+    # Добавление сегментов
+    segments = {}
+    floor_numbers = {}
+    segments = db.query(Segment).filter(Segment.building_id.in_(building_ids)).all()
+    for segment in segments:
+        floor = db.query(Floor).filter(Floor.id == segment.floor_id).first()
+        floor_number = floor.floor_number if floor else segment.floor_id
+        floor_numbers[segment.id] = floor_number
+        start_vertex = f"segment_{segment.id}_start"
+        end_vertex = f"segment_{segment.id}_end"
+        graph.add_vertex(start_vertex, {"coords": (segment.start_x, segment.start_y, floor_number), "building_id": segment.building_id})
+        graph.add_vertex(end_vertex, {"coords": (segment.end_x, segment.end_y, floor_number), "building_id": segment.building_id})
+        segments[segment.id] = (start_vertex, end_vertex)
+        weight = max(0.1, math.sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2))
+        graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
 
-    # Получаем все вершины и рёбра
-    vertices = db.query(Vertex).filter(Vertex.building_id.in_(building_ids)).all()
-    edges = db.query(Edge).filter(
-        Edge.from_vertex_id.in_([v.id for v in vertices]) &
-        Edge.to_vertex_id.in_([v.id for v in vertices])
-    ).all()
+    # Добавление уличных сегментов
+    outdoor_segments = {}
+    for outdoor in db.query(OutdoorSegment).all():
+        start_vertex = f"outdoor_{outdoor.id}_start"
+        end_vertex = f"outdoor_{outdoor.id}_end"
+        coords_start = (outdoor.start_x, outdoor.start_y, 1)
+        coords_end = (outdoor.end_x, outdoor.end_y, 1)
+        graph.add_vertex(start_vertex, {"coords": coords_start, "building_id": None})
+        graph.add_vertex(end_vertex, {"coords": coords_end, "building_id": None})
+        weight = outdoor.weight if outdoor.weight else max(0.1, math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2))
+        graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
+        outdoor_segments[outdoor.id] = (start_vertex, end_vertex)
 
-    # Объединяем парные лестничные вершины
-    vertex_map = {}  # Для хранения объединённых вершин
-    for vertex in vertices:
-        name = vertex.name
-        if name.startswith("phantom_stair_"):
-            # Ищем парную вершину (например, phantom_stair_6_to_1 и phantom_stair_1_from_6)
-            parts = name.split("_")
-            if "to" in parts:
-                from_floor, to_floor = parts[2], parts[4]
-                paired_name = f"phantom_stair_{to_floor}_from_{from_floor}"
-                canonical_name = f"phantom_stair_{from_floor}_to_{to_floor}"
-                vertex_map[name] = canonical_name
-                vertex_map[paired_name] = canonical_name
-            elif "from" in parts:
-                to_floor, from_floor = parts[2], parts[4]
-                paired_name = f"phantom_stair_{from_floor}_to_{to_floor}"
-                canonical_name = f"phantom_stair_{from_floor}_to_{to_floor}"
-                vertex_map[name] = canonical_name
-                vertex_map[paired_name] = canonical_name
+    # Соединение комнат с сегментами
+    for room in rooms:
+        room_vertex = f"room_{room.id}"
+        connections = db.query(Connection).filter(Connection.room_id == room.id).all()
+        for conn in connections:
+            if conn.segment_id and conn.segment_id in segments:
+                segment_start, segment_end = segments[conn.segment_id]
+                phantom_vertex = f"phantom_room_{room.id}_segment_{conn.segment_id}"
+                floor = db.query(Floor).filter(Floor.id == room.floor_id).first()
+                floor_number = floor.floor_number if floor else room.floor_id
+                graph.add_vertex(phantom_vertex, {"coords": (room.cab_x, room.cab_y, floor_number), "building_id": room.building_id})
+                weight = conn.weight if conn.weight else 2.0
+                graph.add_edge(room_vertex, phantom_vertex, weight, {"type": "phantom"})
+                graph.add_edge(phantom_vertex, segment_start, weight, {"type": "segment"})
+                graph.add_edge(phantom_vertex, segment_end, weight, {"type": "segment"})
 
-    # Добавляем вершины в граф
-    for vertex in vertices:
-        name = vertex.name
-        # Если вершина лестничная, используем каноническое имя
-        if name in vertex_map:
-            name = vertex_map[name]
-            # Используем координаты вершины "to"
-            original_name = next(v.name for v in vertices if v.name == name)
-            vertex_data = next(v for v in vertices if v.name == original_name)
-        else:
-            vertex_data = vertex
+    # Обработка соединений
+    for conn in db.query(Connection).all():
+        # Лестницы
+        if conn.from_segment_id and conn.to_segment_id:
+            from_start, from_end = segments[conn.from_segment_id]
+            to_start, to_end = segments[conn.to_segment_id]
+            from_floor = floor_numbers[conn.from_segment_id]
+            to_floor = floor_numbers[conn.to_segment_id]
+            phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
+            phantom_to = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
+            from_coords = graph.get_vertex_data(from_end)["coords"]
+            to_coords = graph.get_vertex_data(to_start)["coords"]
+            graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
+            graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
+            weight = conn.weight if conn.weight else 2.0
+            graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
+            graph.add_edge(from_start, phantom_from, weight, {"type": "segment"})
+            graph.add_edge(from_end, phantom_from, weight, {"type": "segment"})
+            graph.add_edge(phantom_to, to_start, weight, {"type": "segment"})
+            graph.add_edge(phantom_to, to_end, weight, {"type": "segment"})
 
-        coords = (vertex_data.x, vertex_data.y, vertex_data.floor_id)
-        graph.add_vertex(name, {"coords": coords})
+        # Дверь-улица
+        elif conn.from_segment_id and conn.to_outdoor_id:
+            from_start, from_end = segments[conn.from_segment_id]
+            to_start, to_end = outdoor_segments[conn.to_outdoor_id]
+            phantom_from = f"phantom_segment_{conn.from_segment_id}_to_outdoor_{conn.to_outdoor_id}"
+            from_coords = graph.get_vertex_data(from_end)["coords"]
+            graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
+            weight = conn.weight if conn.weight else 2.0
+            graph.add_edge(from_start, phantom_from, weight, {"type": "segment"})
+            graph.add_edge(from_end, phantom_from, weight, {"type": "segment"})
+            graph.add_edge(phantom_from, to_start, weight, {"type": "дверь"})
+            graph.add_edge(phantom_from, to_end, weight, {"type": "дверь"})
 
-    # Добавляем рёбра с фильтрацией
-    for edge in edges:
-        from_vertex = next(v for v in vertices if v.id == edge.from_vertex_id)
-        to_vertex = next(v for v in vertices if v.id == edge.to_vertex_id)
+        # Улица-дверь
+        elif conn.from_outdoor_id and conn.to_segment_id:
+            from_start, from_end = outdoor_segments[conn.from_outdoor_id]
+            to_start, to_end = segments[conn.to_segment_id]
+            phantom_to = f"phantom_segment_{conn.to_segment_id}_from_outdoor_{conn.from_outdoor_id}"
+            to_coords = graph.get_vertex_data(to_start)["coords"]
+            graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
+            weight = conn.weight if conn.weight else 2.0
+            graph.add_edge(from_start, phantom_to, weight, {"type": "дверь"})
+            graph.add_edge(from_end, phantom_to, weight, {"type": "дверь"})
+            graph.add_edge(phantom_to, to_start, weight, {"type": "segment"})
+            graph.add_edge(phantom_to, to_end, weight, {"type": "segment"})
 
-        from_name = from_vertex.name
-        to_name = to_vertex.name
+        # Улица-улица
+        elif conn.from_outdoor_id and conn.to_outdoor_id:
+            from_start, from_end = outdoor_segments[conn.from_outdoor_id]
+            to_start, to_end = outdoor_segments[conn.to_outdoor_id]
+            weight = conn.weight if conn.weight else 10.0
+            graph.add_edge(from_start, to_start, weight, {"type": "улица"})
+            graph.add_edge(from_end, to_end, weight, {"type": "улица"})
 
-        # Применяем маппинг для лестничных вершин
-        if from_name in vertex_map:
-            from_name = vertex_map[from_name]
-        if to_name in vertex_map:
-            to_name = vertex_map[to_name]
-
-        # Пропускаем рёбра, ведущие к "end" вершинам, если это не переход "улица-дверь", "дверь-улица" или лестница
-        if to_name.endswith("_end"):
-            if not (from_name.startswith("phantom_segment") or to_name.startswith("phantom_segment") or
-                    from_name.startswith("phantom_stair") or to_name.startswith("phantom_stair")):
-                continue
-
-        weight = edge.weight
-        edge_type = edge.type if hasattr(edge, "type") else "unknown"
-        graph.add_edge(from_name, to_name, weight, {"type": edge_type})
-
-    logger.info(f"Граф успешно построен с {len(graph.vertices)} вершинами и {len(graph.edges)} рёбрами")
+    logger.info(f"Граф построен: {len(graph.vertices)} вершин, {sum(len(neighbors) for neighbors in graph.edges.values()) // 2} рёбер")
     return graph
