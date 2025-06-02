@@ -166,7 +166,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
         # Логирование и отправка маршрута
         logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
-        return {" "path": result, "weight": weight, "instructions": final_instructions}
+        return {"path": result, "weight": weight, "instructions": final_instructions}
 
     except Exception as e:
         logger.error(f"Ошибка при формировании маршрута: {str(e)}")
