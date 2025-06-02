@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
+from app.map.models.room import Room  # Импортируем модель Room
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -12,6 +13,25 @@ router = APIRouter()
 @router.get("/route")
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     logger.info(f"Получен запрос на построение маршрута от {start} до {end}")
+
+    # Извлечение ID комнат из start и end
+    try:
+        start_id = int(start.replace("room_", ""))
+        end_id = int(end.replace("room_", ""))
+    except ValueError as e:
+        logger.error(f"Неверный формат start или end: {start}, {end}")
+        raise HTTPException(status_code=400, detail=f"Неверный формат start или end: {start}, {end}")
+
+    # Получение данных о комнатах из базы
+    start_room = db.query(Room).filter(Room.id == start_id).first()
+    end_room = db.query(Room).filter(Room.id == end_id).first()
+    if not start_room or not end_room:
+        logger.error(f"Комната с id {start_id} или {end_id} не найдена")
+        raise HTTPException(status_code=404, detail=f"Комната с id {start_id} или {end_id} не найдена")
+
+    # Формирование названий кабинетов
+    start_room_name = f"{start_room.name} {start_room.cab_id} кабинет"
+    end_room_name = f"{end_room.name} {end_room.cab_id} кабинет"
 
     # Построение графа
     try:
@@ -39,7 +59,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     floor_points = []
     instructions = []
     seen_vertices = set()
-    last_action = None  # Для отслеживания последней добавленной инструкции и избежания дублирования
+    last_action = None  # Для отслеживания последней добавленной инструкции
 
     try:
         for i, vertex in enumerate(path):
@@ -66,19 +86,19 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 next_vertex = path[i + 1]
                 edge_data = graph.get_edge_data(vertex, next_vertex)
 
-                # Инструкции для лестниц
+                # Инструкции для лестниц (только если этаж меняется)
                 if edge_data.get("type") == "лестница":
                     prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
-                    direction = "вверх" if floor > prev_floor else "вниз"
-                    instruction = f"Поднимитесь {direction} по лестнице с {prev_floor} этажа на {floor} этаж"
-                    if last_action != "stairs" or instructions[-1] != instruction:
-                        instructions.append(instruction)
-                        last_action = "stairs"
+                    if floor != prev_floor:  # Добавляем инструкцию только при смене этажа
+                        direction = "вверх" if floor > prev_floor else "вниз"
+                        instruction = f"Поднимитесь {direction} по лестнице с {prev_floor} этажа на {floor} этаж"
+                        if last_action != "stairs" or instructions[-1] != instruction:
+                            instructions.append(instruction)
+                            last_action = "stairs"
 
                 # Инструкции для выхода из здания
                 elif edge_data.get("type") == "дверь":
                     if "outdoor" in next_vertex and last_action != "exit":
-                        # Определяем направление выхода
                         next_vertex_data = graph.get_vertex_data(next_vertex)
                         dx = next_vertex_data["coords"][0] - x
                         dy = next_vertex_data["coords"][1] - y
@@ -94,7 +114,6 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         instructions.append(f"Выйдите из здания и поверните {direction}")
                         last_action = "exit"
                     elif "outdoor" in vertex and last_action != "enter":
-                        # Определяем направление входа
                         next_vertex_data = graph.get_vertex_data(next_vertex)
                         dx = next_vertex_data["coords"][0] - x
                         dy = next_vertex_data["coords"][1] - y
@@ -139,26 +158,23 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         direction = "поверните направо"
                     else:
                         direction = "развернитесь"
-                    # Если предыдущая точка была на улице, добавляем "на перекрестке"
-                    if "outdoor" in current["vertex"]:
-                        direction = f"На перекрестке {direction}"
+                    # Упрощаем "На перекрестке", добавляем только при смене типа вершины
+                    if j > 0 and ("outdoor" in current["vertex"] != "outdoor" in prev_point["vertex"]):
+                        direction = f"На перекрестке {direction.lower()}"
                     else:
-                        direction = f"{direction.capitalize()}"
+                        direction = direction.capitalize()
                 else:
                     direction = "Начните движение"
 
                 directions.append(direction)
 
-        # Добавление названий кабинетов в начало и конец
-        start_room = path[0].replace("room_", "кабинет ")
-        end_room = path[-1].replace("room_", "кабинет ")
-        final_instructions = [f"Начните маршрут из {start_room} на {current_floor} этаже"]
+        # Формирование финальных инструкций с названиями кабинетов
+        final_instructions = [f"Начните маршрут из {start_room_name} на {current_floor} этаже"]
         direction_idx = 0
 
         # Комбинируем инструкции и направления
         for instr in instructions:
             final_instructions.append(instr)
-            # Добавляем направления только после инструкций, не связанных с лестницами или входом/выходом
             if "этаж" not in instr and "здание" not in instr and direction_idx < len(directions):
                 final_instructions.append(directions[direction_idx])
                 direction_idx += 1
@@ -166,7 +182,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             final_instructions.append(directions[direction_idx])
             direction_idx += 1
 
-        final_instructions.append(f"Вы прибыли в {end_room} на {current_floor} этаже")
+        final_instructions.append(f"Вы прибыли в {end_room_name} на {current_floor} этаже")
 
         logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
         return {"path": result, "weight": weight, "instructions": final_instructions}
