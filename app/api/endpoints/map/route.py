@@ -104,8 +104,11 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         i += 1
                         continue
 
-                # Пропускаем лишние точки сегментов перед лестницей
-                if "segment" in current["vertex"] and "end" in current["vertex"] and "stair" in next_point["vertex"]:
+                # Пропускаем лишние точки сегментов перед и после лестницы
+                if "segment" in current["vertex"] and "stair" in next_point["vertex"]:
+                    i += 1
+                    continue
+                if "stair" in current["vertex"] and "segment" in next_point["vertex"] and "start" in next_point["vertex"]:
                     i += 1
                     continue
 
