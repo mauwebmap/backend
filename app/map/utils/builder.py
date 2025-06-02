@@ -112,13 +112,13 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     # Обработка соединений
     for conn in db.query(Connection).all():
         # Лестницы
-        if conn.from_segment_id and conn.to_segment_id:
+        if conn.from_segment_id and conn.to_segment_id and conn.from_floor_id and conn.to_floor_id:
             if conn.from_segment_id not in segments or conn.to_segment_id not in segments:
                 continue
             from_start, from_end = segments[conn.from_segment_id]
             to_start, to_end = segments[conn.to_segment_id]
-            from_floor = floor_numbers[conn.from_segment_id]
-            to_floor = floor_numbers[conn.to_segment_id]
+            from_floor = conn.from_floor_id
+            to_floor = conn.to_floor_id
             # Фантомная точка начала лестницы (на from_floor)
             phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
             # Конец лестницы (на to_floor)
