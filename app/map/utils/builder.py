@@ -1,3 +1,4 @@
+# app/map/utils/builder.py
 from .graph import Graph
 from app.map.models.room import Room
 from app.map.models.segment import Segment
@@ -117,37 +118,56 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 continue
             from_start, from_end = segments[conn.from_segment_id]
             to_start, to_end = segments[conn.to_segment_id]
-            from_floor = floor_numbers[conn.from_segment_id] if conn.from_floor_id is None else conn.from_floor_id
-            to_floor = floor_numbers[conn.to_segment_id] if conn.to_floor_id is None else conn.to_floor_id
-
-            # Фантомная точка на начале from_segment_id (вход на лестницу)
+            from_floor = floor_numbers[conn.from_segment_id]
+            to_floor = floor_numbers[conn.to_segment_id]
+            # Первая фантомная точка — координаты лестницы
             phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
-            # Фантомная точка на начале to_segment_id (выход с лестницы)
             phantom_to = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
-
+            # Вторая фантомная точка — дальше от сегмента
+            phantom_from_far = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}_far"
+            phantom_to_far = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}_far"
             # Получаем данные сегментов
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
             if from_segment and to_segment:
-                # Координаты фантомных точек — начало сегментов
-                from_coords = (from_segment.start_x, from_segment.start_y, from_floor)
-                to_coords = (to_segment.start_x, to_segment.start_y, to_floor)
+                # Координаты первой точки (как есть)
+                if from_segment.start_x == from_segment.end_x:  # Вертикальный сегмент
+                    x = from_segment.start_x
+                    y = to_segment.start_y if abs(to_segment.start_y - from_segment.start_y) < abs(to_segment.end_y - from_segment.start_y) else to_segment.end_y
+                else:  # Горизонтальный сегмент
+                    x = to_segment.start_x if abs(to_segment.start_x - from_segment.start_x) < abs(to_segment.end_x - from_segment.start_x) else to_segment.end_x
+                    y = from_segment.start_y
+                from_coords = (x, y, from_floor)
+                to_coords = (x, y, to_floor)
                 graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
                 graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
-
-                # Соединяем только с началом сегментов лестницы
+                # Координаты второй точки (дальше от сегмента)
+                from_start_coords = graph.get_vertex_data(from_start)["coords"]
+                from_end_coords = graph.get_vertex_data(from_end)["coords"]
+                to_start_coords = graph.get_vertex_data(to_start)["coords"]
+                to_end_coords = graph.get_vertex_data(to_end)["coords"]
+                # Выбираем дальнюю точку для from_segment
+                dist_start = math.sqrt((from_start_coords[0] - x) ** 2 + (from_start_coords[1] - y) ** 2)
+                dist_end = math.sqrt((from_end_coords[0] - x) ** 2 + (from_end_coords[1] - y) ** 2)
+                far_coords_from = from_end_coords if dist_end > dist_start else from_start_coords
+                # Выбираем дальнюю точку для to_segment
+                dist_start_to = math.sqrt((to_start_coords[0] - x) ** 2 + (to_start_coords[1] - y) ** 2)
+                dist_end_to = math.sqrt((to_end_coords[0] - x) ** 2 + (to_end_coords[1] - y) ** 2)
+                far_coords_to = to_end_coords if dist_end_to > dist_start_to else to_start_coords
+                graph.add_vertex(phantom_from_far, {"coords": far_coords_from, "building_id": None})
+                graph.add_vertex(phantom_to_far, {"coords": far_coords_to, "building_id": None})
+                # Соединяем точки
                 weight = conn.weight if conn.weight else 2.0
-                if conn.from_floor_id is not None and conn.to_floor_id is not None:
-                    # Для лестниц с явными floor_id: соединяем фантомные точки с началом сегментов
-                    graph.add_edge(from_start, phantom_from, weight, {"type": "лестница"})
-                    graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
-                    graph.add_edge(phantom_to, to_start, weight, {"type": "лестница"})
-                else:
-                    # Для лестниц без floor_id: соединяем как раньше
-                    graph.add_edge(from_start, phantom_from, weight, {"type": "лестница"})
-                    graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
-                    graph.add_edge(phantom_to, to_start, weight, {"type": "segment"})
-                    graph.add_edge(phantom_to, to_end, weight, {"type": "segment"})
+                graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
+                graph.add_edge(phantom_from_far, phantom_to_far, weight, {"type": "лестница"})
+                graph.add_edge(from_start, phantom_from, weight, {"type": "segment"})
+                graph.add_edge(from_end, phantom_from, weight, {"type": "segment"})
+                graph.add_edge(phantom_to, to_start, weight, {"type": "segment"})
+                graph.add_edge(phantom_to, to_end, weight, {"type": "segment"})
+                graph.add_edge(from_start, phantom_from_far, weight, {"type": "segment"})
+                graph.add_edge(from_end, phantom_from_far, weight, {"type": "segment"})
+                graph.add_edge(phantom_to_far, to_start, weight, {"type": "segment"})
+                graph.add_edge(phantom_to_far, to_end, weight, {"type": "segment"})
 
         # Дверь-улица (только если нужно)
         elif include_outdoor and conn.from_segment_id and conn.to_outdoor_id:

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
+from app.map.models.connection import Connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,6 +41,13 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     instructions = []
     seen_vertices = set()
 
+    # Загружаем соединения из базы данных
+    connections = db.query(Connection).all()
+    stair_connections = {}
+    for conn in connections:
+        if conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id:
+            stair_connections[(conn.from_segment_id, conn.to_segment_id)] = conn
+
     try:
         for i, vertex in enumerate(path):
             vertex_data = graph.get_vertex_data(vertex)
@@ -60,13 +68,40 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
                 seen_vertices.add(vertex)
 
-            # Генерация инструкций
+            # Генерация инструкций и разделение лестниц
             if i < len(path) - 1:
                 next_vertex = path[i + 1]
                 edge_data = graph.get_edge_data(vertex, next_vertex)
                 if edge_data.get("type") == "лестница":
                     prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
                     direction = "up" if floor > prev_floor else "down"
+
+                    # Извлекаем from_segment_id и to_segment_id из вершины
+                    if "stair" in vertex:
+                        parts = vertex.split("_")
+                        if len(parts) >= 4:
+                            from_seg = int(parts[2])
+                            to_seg = int(parts[4])
+                            conn = stair_connections.get((from_seg, to_seg))
+                            if conn and conn.from_floor_id is not None and conn.to_floor_id is not None:
+                                # Разделяем лестницу на две части
+                                if "to" in vertex:  # Это phantom_stair_from_seg_to_seg
+                                    # Добавляем точку на этаже from_floor_id
+                                    if floor_points and floor_points[-1]["floor"] != conn.from_floor_id:
+                                        result.append({"floor": current_floor, "points": floor_points})
+                                        floor_points = []
+                                        current_floor = conn.from_floor_id
+                                    # Добавляем точку начала лестницы
+                                    floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": conn.from_floor_id})
+                                elif "from" in vertex:  # Это phantom_stair_to_seg_from_seg
+                                    # Добавляем точку на этаже to_floor_id
+                                    if floor_points and floor_points[-1]["floor"] != conn.to_floor_id:
+                                        result.append({"floor": current_floor, "points": floor_points})
+                                        floor_points = []
+                                        current_floor = conn.to_floor_id
+                                    # Добавляем точку конца лестницы
+                                    floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": conn.to_floor_id})
+
                     if not any("stairs" in instr.lower() for instr in instructions[-2:]):  # Избегаем дублирования
                         instructions.append(f"Go {direction} via stairs from floor {prev_floor} to floor {floor}")
                 elif edge_data.get("type") == "дверь":
