@@ -59,7 +59,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     floor_points = []
     instructions = []
     seen_vertices = set()
-    last_action = None  # Для отслеживания последней добавленной инструкции
+    last_action = None  # Для отслеживания последней инструкции
 
     try:
         for i, vertex in enumerate(path):
@@ -81,7 +81,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
                 seen_vertices.add(vertex)
 
-            # Генерация инструкций
+            # Генерация инструкций для лестниц и переходов
             if i < len(path) - 1:
                 next_vertex = path[i + 1]
                 edge_data = graph.get_edge_data(vertex, next_vertex)
@@ -110,7 +110,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         elif 135 < angle <= 225:
                             direction = "налево"
                         else:
-                            direction = "назад"
+                            direction = "прямо"  # Заменяем "назад" на "прямо"
                         instructions.append(f"Выйдите из здания и поверните {direction}")
                         last_action = "exit"
                     elif "outdoor" in vertex and last_action != "enter":
@@ -125,7 +125,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         elif 135 < angle <= 225:
                             direction = "налево"
                         else:
-                            direction = "назад"
+                            direction = "прямо"
                         instructions.append(f"Поверните {direction} и зайдите в здание")
                         last_action = "enter"
 
@@ -134,7 +134,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
         # Генерация направлений внутри здания или на улице
         directions = []
-        last_direction = None  # Для отслеживания последнего направления и исключения дублирований
+        last_direction = None  # Для исключения дублирований
         for floor_data in result:
             floor_points = floor_data["points"]
             for j in range(len(floor_points) - 1):
@@ -160,9 +160,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     else:
                         direction = "развернитесь"
 
-                    # Проверяем, не повторяется ли направление
+                    # Пропускаем дублирующиеся направления
                     if last_direction == direction:
-                        continue  # Пропускаем дублирующее направление
+                        continue
 
                     # Добавляем "На перекрестке" только при смене типа вершины
                     if j > 0 and ("outdoor" in current["vertex"] != "outdoor" in prev_point["vertex"]):
