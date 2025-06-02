@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
-from app.map.models.room import Room  # Импортируем модель Room
+from app.map.models.room import Room
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -134,6 +134,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
         # Генерация направлений внутри здания или на улице
         directions = []
+        last_direction = None  # Для отслеживания последнего направления и исключения дублирований
         for floor_data in result:
             floor_points = floor_data["points"]
             for j in range(len(floor_points) - 1):
@@ -158,18 +159,22 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         direction = "поверните направо"
                     else:
                         direction = "развернитесь"
-                    # Упрощаем "На перекрестке", добавляем только при смене типа вершины
+
+                    # Проверяем, не повторяется ли направление
+                    if last_direction == direction:
+                        continue  # Пропускаем дублирующее направление
+
+                    # Добавляем "На перекрестке" только при смене типа вершины
                     if j > 0 and ("outdoor" in current["vertex"] != "outdoor" in prev_point["vertex"]):
                         direction = f"На перекрестке {direction.lower()}"
                     else:
                         direction = direction.capitalize()
-                else:
-                    direction = "Начните движение"
 
-                directions.append(direction)
+                    directions.append(direction)
+                    last_direction = direction
 
-        # Формирование финальных инструкций с названиями кабинетов
-        final_instructions = [f"Начните маршрут из {start_room_name} на {current_floor} этаже"]
+        # Формирование финальных инструкций
+        final_instructions = [f"Выйдите из {start_room_name} на {current_floor} этаже"]
         direction_idx = 0
 
         # Комбинируем инструкции и направления
@@ -184,6 +189,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
         final_instructions.append(f"Вы прибыли в {end_room_name} на {current_floor} этаже")
 
+        # Логирование и отправка маршрута
         logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
         return {"path": result, "weight": weight, "instructions": final_instructions}
 
