@@ -159,7 +159,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 last_x, last_y = curr_x, curr_y
                 i += 1
 
-        instructions.append(f"Вы прибыли в {end_room_name} на {result[-1]['points'][-1]['floor']} этаж")
+        instructions.append(f"Вы прибыли в {end_room_name} на {result[-1]['points'][-1]['floor']} этаже")
 
         logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={instructions}")
         return {"path": result, "weight": weight, "instructions": instructions}
