@@ -1,4 +1,3 @@
-# app/map/utils/builder.py
 from .graph import Graph
 from app.map.models.room import Room
 from app.map.models.segment import Segment
@@ -139,8 +138,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                     y = from_segment.start_y
                 from_coords = (x, y, from_floor)
                 to_coords = (x, y, to_floor)
-                graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
-                graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
                 # Координаты второй точки (дальше от сегмента)
                 from_start_coords = graph.get_vertex_data(from_start)["coords"]
                 from_end_coords = graph.get_vertex_data(from_end)["coords"]
@@ -150,10 +147,17 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 dist_start = math.sqrt((from_start_coords[0] - x) ** 2 + (from_start_coords[1] - y) ** 2)
                 dist_end = math.sqrt((from_end_coords[0] - x) ** 2 + (from_end_coords[1] - y) ** 2)
                 far_coords_from = from_end_coords if dist_end > dist_start else from_start_coords
+                # Устанавливаем этаж для дальней точки
+                far_coords_from = (far_coords_from[0], far_coords_from[1], from_floor)
                 # Выбираем дальнюю точку для to_segment
                 dist_start_to = math.sqrt((to_start_coords[0] - x) ** 2 + (to_start_coords[1] - y) ** 2)
                 dist_end_to = math.sqrt((to_end_coords[0] - x) ** 2 + (to_end_coords[1] - y) ** 2)
                 far_coords_to = to_end_coords if dist_end_to > dist_start_to else to_start_coords
+                # Устанавливаем этаж для дальней точки
+                far_coords_to = (far_coords_to[0], far_coords_to[1], to_floor)
+                # Добавляем вершины с правильными этажами
+                graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
+                graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
                 graph.add_vertex(phantom_from_far, {"coords": far_coords_from, "building_id": None})
                 graph.add_vertex(phantom_to_far, {"coords": far_coords_to, "building_id": None})
                 # Соединяем точки
