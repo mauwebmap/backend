@@ -136,14 +136,14 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 # Координаты для продолжения пути (старт сегмента to_segment)
                 to_start_coords = (to_segment.start_x, to_segment.start_y, to_floor)
                 # Добавляем вершины
-                graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})  # Фантом на старте
-                graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})      # Конец лестницы
-                graph.add_vertex(phantom_to_start, {"coords": to_start_coords, "building_id": None})  # Фантом для продолжения
+                graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
+                graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
+                graph.add_vertex(phantom_to_start, {"coords": to_start_coords, "building_id": None})
                 # Соединяем: подъём через фантомную точку на старте, конец на другом этаже
                 weight = conn.weight if conn.weight else 2.0
                 graph.add_edge(from_start, phantom_from, weight, {"type": "лестница"})
                 graph.add_edge(from_end, phantom_from, weight, {"type": "лестница"})
-                graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})  # Переход между этажами
+                graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
                 graph.add_edge(phantom_to, phantom_to_start, weight, {"type": "лестница"})
                 graph.add_edge(phantom_to_start, to_start, weight, {"type": "segment"})
                 graph.add_edge(phantom_to_start, to_end, weight, {"type": "segment"})

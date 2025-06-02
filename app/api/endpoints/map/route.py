@@ -69,6 +69,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             floor = vertex_data["coords"][2] if vertex_data["coords"][2] is not None else 1
             x, y = vertex_data["coords"][0], vertex_data["coords"][1]
 
+            # Добавляем точку, только если её ещё не добавляли
             if vertex not in seen_vertices:
                 if floor != current_floor:
                     if floor_points:
@@ -81,8 +82,8 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         if floor_points:
             result.append({"floor": current_floor, "points": floor_points})
 
-        # Генерация инструкций на основе координат
-        final_instructions = [f"Выйдите из {start_room_name} на {result[0]['points'][0]['floor']} этаже"]
+        # Генерация инструкций
+        instructions = [f"Выйдите из {start_room_name} на {result[0]['points'][0]['floor']} этаже"]
         last_x, last_y = None, None
         last_instruction = None
         in_stair_transition = False
@@ -104,19 +105,12 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         i += 1
                         continue
 
-                # Пропускаем лишние точки сегментов перед и после лестницы
-                if "segment" in current["vertex"] and "stair" in next_point["vertex"]:
-                    i += 1
-                    continue
-                if "stair" in current["vertex"] and "segment" in next_point["vertex"] and "start" in next_point["vertex"]:
-                    i += 1
-                    continue
-
                 # Определяем направление
                 dx = next_x - curr_x
                 dy = next_y - curr_y
                 angle = math.degrees(math.atan2(dy, dx)) if dx != 0 or dy != 0 else 0
 
+                # Проверяем тип перехода
                 if "outdoor" in current["vertex"] and "outdoor" not in next_point["vertex"]:
                     if -45 <= angle <= 45:
                         instruction = "Поверните вправо и зайдите в здание"
@@ -145,7 +139,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     in_stair_transition = False
                 else:
                     if -45 <= angle <= 45:
-                        instruction = "Пройдите вперед"
+                        instruction = "Пройдите вперёд"
                     elif 45 < angle <= 135:
                         instruction = "Поверните налево"
                     elif -135 <= angle < -45:
@@ -159,17 +153,16 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
                 # Убеждаемся, что инструкция не дублируется
                 if instruction != last_instruction:
-                    final_instructions.append(instruction)
+                    instructions.append(instruction)
                     last_instruction = instruction
 
                 last_x, last_y = curr_x, curr_y
                 i += 1
 
-        final_instructions.append(f"Вы прибыли в {end_room_name} на {result[-1]['points'][-1]['floor']} этаже")
+        instructions.append(f"Вы прибыли в {end_room_name} на {result[-1]['points'][-1]['floor']} этаже")
 
-        # Логирование и отправка маршрута
-        logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
-        return {"path": result, "weight": weight, "instructions": final_instructions}
+        logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={instructions}")
+        return {"path": result, "weight": weight, "instructions": instructions}
 
     except Exception as e:
         logger.error(f"Ошибка при формировании маршрута: {str(e)}")
