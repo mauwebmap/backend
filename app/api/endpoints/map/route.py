@@ -57,10 +57,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     result = []
     current_floor = None
     floor_points = []
-    instructions = []
     seen_vertices = set()
-    last_action = None  # Для отслеживания последней инструкции
-    last_stair_start = None  # Для отслеживания начала лестницы
 
     try:
         for i, vertex in enumerate(path):
@@ -72,7 +69,6 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             floor = vertex_data["coords"][2] if vertex_data["coords"][2] is not None else 1
             x, y = vertex_data["coords"][0], vertex_data["coords"][1]
 
-            # Добавляем точку, только если её ещё не добавляли
             if vertex not in seen_vertices:
                 if floor != current_floor:
                     if floor_points:
@@ -82,121 +78,78 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
                 seen_vertices.add(vertex)
 
-            # Генерация инструкций для лестниц и переходов
-            if i < len(path) - 1:
-                next_vertex = path[i + 1]
-                edge_data = graph.get_edge_data(vertex, next_vertex)
-
-                # Инструкции для лестниц
-                if edge_data.get("type") == "лестница":
-                    prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
-                    if floor != prev_floor:  # Смена этажа
-                        direction = "вверх" if floor > prev_floor else "вниз"
-                        if "to" in vertex or "from_far" in vertex:  # Начало лестницы (на этаже отправления)
-                            if last_stair_start is None:
-                                instruction = f"Начните {direction} по лестнице с {prev_floor} этажа на {floor} этаж"
-                                if last_action != "stairs_start" or instructions[-1] != instruction:
-                                    instructions.append(instruction)
-                                    last_action = "stairs_start"
-                                    last_stair_start = vertex
-                        elif "from" in vertex or "to_far" in vertex:  # Конец лестницы (на этаже назначения)
-                            if last_stair_start:
-                                instruction = f"Завершите {direction} по лестнице на {floor} этаж"
-                                if last_action != "stairs_end" or instructions[-1] != instruction:
-                                    instructions.append(instruction)
-                                    last_action = "stairs_end"
-                                    last_stair_start = None
-
-                # Инструкции для выхода из здания
-                elif edge_data.get("type") == "дверь":
-                    if "outdoor" in next_vertex and last_action != "exit":
-                        next_vertex_data = graph.get_vertex_data(next_vertex)
-                        dx = next_vertex_data["coords"][0] - x
-                        dy = next_vertex_data["coords"][1] - y
-                        angle = math.degrees(math.atan2(dy, dx))
-                        if -45 <= angle <= 45:
-                            direction = "вправо"
-                        elif 45 < angle <= 135:
-                            direction = "прямо"
-                        elif 135 < angle <= 225:
-                            direction = "налево"
-                        else:
-                            direction = "прямо"
-                        instructions.append(f"Выйдите из здания и поверните {direction}")
-                        last_action = "exit"
-                    elif "outdoor" in vertex and last_action != "enter":
-                        next_vertex_data = graph.get_vertex_data(next_vertex)
-                        dx = next_vertex_data["coords"][0] - x
-                        dy = next_vertex_data["coords"][1] - y
-                        angle = math.degrees(math.atan2(dy, dx))
-                        if -45 <= angle <= 45:
-                            direction = "вправо"
-                        elif 45 < angle <= 135:
-                            direction = "прямо"
-                        elif 135 < angle <= 225:
-                            direction = "налево"
-                        else:
-                            direction = "прямо"
-                        instructions.append(f"Поверните {direction} и зайдите в здание")
-                        last_action = "enter"
-
         if floor_points:
             result.append({"floor": current_floor, "points": floor_points})
 
-        # Генерация направлений внутри здания или на улице
-        directions = []
-        last_direction = None  # Для исключения дублирований
+        # Генерация инструкций на основе координат
+        final_instructions = [f"Выйдите из {start_room_name} на {current_floor} этаже"]
+        last_x, last_y = None, None
+        last_instruction = None
+
         for floor_data in result:
-            floor_points = floor_data["points"]
-            for j in range(len(floor_points) - 1):
-                current = floor_points[j]
-                next_point = floor_points[j + 1]
-                prev_point = floor_points[j - 1] if j > 0 else None
+            points = floor_data["points"]
+            for i in range(len(points) - 1):
+                current = points[i]
+                next_point = points[i + 1]
+                curr_x, curr_y = current["x"], current["y"]
+                next_x, next_y = next_point["x"], next_point["y"]
 
-                dx = next_point["x"] - current["x"]
-                dy = next_point["y"] - current["y"]
-                angle = math.degrees(math.atan2(dy, dx))
-
-                if prev_point:
-                    prev_dx = current["x"] - prev_point["x"]
-                    prev_dy = current["y"] - prev_point["y"]
-                    prev_angle = math.degrees(math.atan2(prev_dy, prev_dx))
-                    turn_angle = (angle - prev_angle + 180) % 360 - 180
-                    if -45 <= turn_angle <= 45:
-                        direction = "пройдите вперед"
-                    elif 45 < turn_angle <= 135:
-                        direction = "поверните налево"
-                    elif -135 <= turn_angle < -45:
-                        direction = "поверните направо"
-                    else:
-                        direction = "развернитесь"
-
-                    # Пропускаем дублирующиеся направления
-                    if last_direction == direction:
+                # Игнорируем точки с разницей меньше 10
+                if last_x is not None and last_y is not None:
+                    dx = abs(curr_x - last_x)
+                    dy = abs(curr_y - last_y)
+                    if dx < 10 and dy < 10:
                         continue
 
-                    # Добавляем "На перекрестке" только при смене типа вершины
-                    if j > 0 and ("outdoor" in current["vertex"] != "outdoor" in prev_point["vertex"]):
-                        direction = f"На перекрестке {direction.lower()}"
+                # Определяем направление
+                dx = next_x - curr_x
+                dy = next_y - curr_y
+                angle = math.degrees(math.atan2(dy, dx)) if dx != 0 or dy != 0 else 0
+
+                if "outdoor" in current["vertex"] and "outdoor" not in next_point["vertex"]:
+                    if -45 <= angle <= 45:
+                        instruction = "Поверните вправо и зайдите в здание"
+                    elif 45 < angle <= 135:
+                        instruction = "Поверните прямо и зайдите в здание"
+                    elif 135 < angle <= 225:
+                        instruction = "Поверните налево и зайдите в здание"
                     else:
-                        direction = direction.capitalize()
+                        instruction = "Поверните прямо и зайдите в здание"
+                elif "outdoor" not in current["vertex"] and "outdoor" in next_point["vertex"]:
+                    if -45 <= angle <= 45:
+                        instruction = "Выйдите из здания и поверните вправо"
+                    elif 45 < angle <= 135:
+                        instruction = "Выйдите из здания и поверните прямо"
+                    elif 135 < angle <= 225:
+                        instruction = "Выйдите из здания и поверните налево"
+                    else:
+                        instruction = "Выйдите из здания и поверните прямо"
+                elif "stair" in current["vertex"] and "to" in current["vertex"]:
+                    direction = "вверх" if next_point["floor"] > current["floor"] else "вниз"
+                    instruction = f"Начните {direction} по лестнице с {current['floor']} этажа на {next_point['floor']} этаж"
+                elif "stair" in current["vertex"] and "from" in current["vertex"]:
+                    direction = "вверх" if current["floor"] < next_point["floor"] else "вниз"
+                    instruction = f"Завершите {direction} по лестнице на {next_point['floor']} этаж"
+                else:
+                    if -45 <= angle <= 45:
+                        instruction = "Пройдите вперед"
+                    elif 45 < angle <= 135:
+                        instruction = "Поверните налево"
+                    elif -135 <= angle < -45:
+                        instruction = "Поверните направо"
+                    else:
+                        instruction = "Развернитесь"
 
-                    directions.append(direction)
-                    last_direction = direction
+                # Добавляем "На перекрестке", если меняется тип вершины
+                if i > 0 and ("outdoor" in current["vertex"] != "outdoor" in points[i - 1]["vertex"]):
+                    instruction = f"На перекрестке {instruction.lower()}"
 
-        # Формирование финальных инструкций
-        final_instructions = [f"Выйдите из {start_room_name} на {current_floor} этаже"]
-        direction_idx = 0
+                # Убеждаемся, что инструкция не дублируется
+                if instruction != last_instruction:
+                    final_instructions.append(instruction)
+                    last_instruction = instruction
 
-        # Комбинируем инструкции и направления
-        for instr in instructions:
-            final_instructions.append(instr)
-            if "этаж" not in instr and "здание" not in instr and direction_idx < len(directions):
-                final_instructions.append(directions[direction_idx])
-                direction_idx += 1
-        while direction_idx < len(directions):
-            final_instructions.append(directions[direction_idx])
-            direction_idx += 1
+                last_x, last_y = curr_x, curr_y
 
         final_instructions.append(f"Вы прибыли в {end_room_name} на {current_floor} этаже")
 
