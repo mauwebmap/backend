@@ -85,10 +85,12 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         final_instructions = [f"Выйдите из {start_room_name} на {result[0]['points'][0]['floor']} этаже"]
         last_x, last_y = None, None
         last_instruction = None
+        in_stair_transition = False
 
         for floor_data in result:
             points = floor_data["points"]
-            for i in range(len(points) - 1):
+            i = 0
+            while i < len(points) - 1:
                 current = points[i]
                 next_point = points[i + 1]
                 curr_x, curr_y = current["x"], current["y"]
@@ -99,7 +101,13 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     dx = abs(curr_x - last_x)
                     dy = abs(curr_y - last_y)
                     if dx < 10 and dy < 10:
+                        i += 1
                         continue
+
+                # Пропускаем лишние точки сегментов перед лестницей
+                if "segment" in current["vertex"] and "end" in current["vertex"] and "stair" in next_point["vertex"]:
+                    i += 1
+                    continue
 
                 # Определяем направление
                 dx = next_x - curr_x
@@ -124,12 +132,14 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         instruction = "Выйдите из здания и поверните налево"
                     else:
                         instruction = "Выйдите из здания и поверните прямо"
-                elif "stair" in current["vertex"] and "to" in current["vertex"]:
+                elif "stair" in current["vertex"] and "to" in current["vertex"] and not in_stair_transition:
                     direction = "вверх" if next_point["floor"] > current["floor"] else "вниз"
                     instruction = f"Начните {direction} по лестнице с {current['floor']} этажа на {next_point['floor']} этаж"
-                elif "stair" in current["vertex"] and "from" in current["vertex"]:
+                    in_stair_transition = True
+                elif "stair" in current["vertex"] and "from" in current["vertex"] and in_stair_transition:
                     direction = "вверх" if current["floor"] < next_point["floor"] else "вниз"
-                    instruction = f"Завершите {direction} по лестнице на {next_point['floor']} этаж"
+                    instruction = f"Завершите {direction} по лестнице на {current['floor']} этаж"
+                    in_stair_transition = False
                 else:
                     if -45 <= angle <= 45:
                         instruction = "Пройдите вперед"
@@ -150,12 +160,13 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     last_instruction = instruction
 
                 last_x, last_y = curr_x, curr_y
+                i += 1
 
         final_instructions.append(f"Вы прибыли в {end_room_name} на {result[-1]['points'][-1]['floor']} этаже")
 
         # Логирование и отправка маршрута
         logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
-        return {"path": result, "weight": weight, "instructions": final_instructions}
+        return {" "path": result, "weight": weight, "instructions": final_instructions}
 
     except Exception as e:
         logger.error(f"Ошибка при формировании маршрута: {str(e)}")

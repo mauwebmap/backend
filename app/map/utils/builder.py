@@ -123,6 +123,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
             # Конец лестницы (на to_floor)
             phantom_to = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
+            # Фантомная точка на to_floor для продолжения пути
+            phantom_to_start = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}_start"
             # Получаем данные сегментов
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
@@ -139,13 +141,15 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 # Добавляем вершины
                 graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})  # Фантом на старте
                 graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})      # Конец лестницы
+                graph.add_vertex(phantom_to_start, {"coords": to_coords, "building_id": None}) # Фантом для продолжения
                 # Соединяем: подъём через фантомную точку на старте, конец на другом этаже
                 weight = conn.weight if conn.weight else 2.0
                 graph.add_edge(from_start, phantom_from, weight, {"type": "лестница"})  # Соединение с началом
                 graph.add_edge(from_end, phantom_from, weight, {"type": "лестница"})
                 graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})  # Переход между этажами
-                graph.add_edge(phantom_to, to_start, weight, {"type": "лестница"})      # Соединение с сегментом на to_floor
-                graph.add_edge(phantom_to, to_end, weight, {"type": "лестница"})
+                graph.add_edge(phantom_to, phantom_to_start, weight, {"type": "лестница"})  # Конец к фантомной точке
+                graph.add_edge(phantom_to_start, to_start, weight, {"type": "segment"})    # Продолжение по сегменту
+                graph.add_edge(phantom_to_start, to_end, weight, {"type": "segment"})
 
         # Дверь-улица (только если нужно)
         elif include_outdoor and conn.from_segment_id and conn.to_outdoor_id:
