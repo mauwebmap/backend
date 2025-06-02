@@ -60,6 +60,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     instructions = []
     seen_vertices = set()
     last_action = None  # Для отслеживания последней инструкции
+    last_stair_start = None  # Для отслеживания начала лестницы
 
     try:
         for i, vertex in enumerate(path):
@@ -86,15 +87,25 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 next_vertex = path[i + 1]
                 edge_data = graph.get_edge_data(vertex, next_vertex)
 
-                # Инструкции для лестниц (только если этаж меняется)
+                # Инструкции для лестниц
                 if edge_data.get("type") == "лестница":
                     prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
-                    if floor != prev_floor:  # Добавляем инструкцию только при смене этажа
+                    if floor != prev_floor:  # Смена этажа
                         direction = "вверх" if floor > prev_floor else "вниз"
-                        instruction = f"Поднимитесь {direction} по лестнице с {prev_floor} этажа на {floor} этаж"
-                        if last_action != "stairs" or instructions[-1] != instruction:
-                            instructions.append(instruction)
-                            last_action = "stairs"
+                        if "to" in vertex or "from_far" in vertex:  # Начало лестницы (на этаже отправления)
+                            if last_stair_start is None:
+                                instruction = f"Начните {direction} по лестнице с {prev_floor} этажа на {floor} этаж"
+                                if last_action != "stairs_start" or instructions[-1] != instruction:
+                                    instructions.append(instruction)
+                                    last_action = "stairs_start"
+                                    last_stair_start = vertex
+                        elif "from" in vertex or "to_far" in vertex:  # Конец лестницы (на этаже назначения)
+                            if last_stair_start:
+                                instruction = f"Завершите {direction} по лестнице на {floor} этаж"
+                                if last_action != "stairs_end" or instructions[-1] != instruction:
+                                    instructions.append(instruction)
+                                    last_action = "stairs_end"
+                                    last_stair_start = None
 
                 # Инструкции для выхода из здания
                 elif edge_data.get("type") == "дверь":
@@ -110,7 +121,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         elif 135 < angle <= 225:
                             direction = "налево"
                         else:
-                            direction = "прямо"  # Заменяем "назад" на "прямо"
+                            direction = "прямо"
                         instructions.append(f"Выйдите из здания и поверните {direction}")
                         last_action = "exit"
                     elif "outdoor" in vertex and last_action != "enter":
