@@ -82,7 +82,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             result.append({"floor": current_floor, "points": floor_points})
 
         # Генерация инструкций на основе координат
-        final_instructions = [f"Выйдите из {start_room_name} на {current_floor} этаже"]
+        final_instructions = [f"Выйдите из {start_room_name} на {result[0]['points'][0]['floor']} этаже"]
         last_x, last_y = None, None
         last_instruction = None
 
@@ -151,7 +151,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
                 last_x, last_y = curr_x, curr_y
 
-        final_instructions.append(f"Вы прибыли в {end_room_name} на {current_floor} этаже")
+        final_instructions.append(f"Вы прибыли в {end_room_name} на {result[-1]['points'][-1]['floor']} этаже")
 
         # Логирование и отправка маршрута
         logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
