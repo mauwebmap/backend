@@ -6,6 +6,7 @@ from app.database.database import get_db
 from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.connection import Connection
+from app.map.models.room import Room  # Предполагается, что модель Room определена для таблицы rooms
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -13,6 +14,16 @@ router = APIRouter()
 @router.get("/route")
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     logger.info(f"Получен запрос на построение маршрута от {start} до {end}")
+
+    # Получение названий кабинетов из таблицы rooms
+    try:
+        start_room = db.query(Room).filter(Room.cab_id == start).first()
+        end_room = db.query(Room).filter(Room.cab_id == end).first()
+        start_name = start_room.name if start_room else f"точки {start}"
+        end_name = end_room.name if end_room else f"точки {end}"
+    except Exception as e:
+        logger.error(f"Ошибка при получении названий кабинетов: {str(e)}")
+        raise HTTPException(status_code=500, detail="Ошибка при получении данных о кабинетах")
 
     # Построение графа
     try:
@@ -49,6 +60,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             stair_connections[(conn.from_segment_id, conn.to_segment_id)] = conn
 
     try:
+        # Начальная инструкция с названием кабинета
+        instructions.append(f"Начните движение из {start_name}")
+
         for i, vertex in enumerate(path):
             vertex_data = graph.get_vertex_data(vertex)
             if not vertex_data or "coords" not in vertex_data:
@@ -68,13 +82,13 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
                 seen_vertices.add(vertex)
 
-            # Генерация инструкций и разделение лестниц
+            # Генерация инструкций для лестниц и дверей
             if i < len(path) - 1:
                 next_vertex = path[i + 1]
                 edge_data = graph.get_edge_data(vertex, next_vertex)
                 if edge_data.get("type") == "лестница":
                     prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
-                    direction = "up" if floor > prev_floor else "down"
+                    direction = "поднимитесь" if floor > prev_floor else "спуститесь"
 
                     # Извлекаем from_segment_id и to_segment_id из вершины
                     if "stair" in vertex:
@@ -86,29 +100,25 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                             if conn and conn.from_floor_id is not None and conn.to_floor_id is not None:
                                 # Разделяем лестницу на две части
                                 if "to" in vertex:  # Это phantom_stair_from_seg_to_seg
-                                    # Добавляем точку на этаже from_floor_id
                                     if floor_points and floor_points[-1]["floor"] != conn.from_floor_id:
                                         result.append({"floor": current_floor, "points": floor_points})
                                         floor_points = []
                                         current_floor = conn.from_floor_id
-                                    # Добавляем точку начала лестницы
                                     floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": conn.from_floor_id})
                                 elif "from" in vertex:  # Это phantom_stair_to_seg_from_seg
-                                    # Добавляем точку на этаже to_floor_id
                                     if floor_points and floor_points[-1]["floor"] != conn.to_floor_id:
                                         result.append({"floor": current_floor, "points": floor_points})
                                         floor_points = []
                                         current_floor = conn.to_floor_id
-                                    # Добавляем точку конца лестницы
                                     floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": conn.to_floor_id})
 
-                    if not any("stairs" in instr.lower() for instr in instructions[-2:]):  # Избегаем дублирования
-                        instructions.append(f"Go {direction} via stairs from floor {prev_floor} to floor {floor}")
+                    if not any("лестнице" in instr for instr in instructions[-2:]):  # Избегаем дублирования
+                        instructions.append(f"{direction.title()} по лестнице с {prev_floor}-го на {floor}-й этаж")
                 elif edge_data.get("type") == "дверь":
-                    if "outdoor" in next_vertex and not any("exit" in instr.lower() for instr in instructions[-2:]):
-                        instructions.append("Exit building through the door")
-                    elif "outdoor" in vertex and not any("enter" in instr.lower() for instr in instructions[-2:]):
-                        instructions.append("Enter building through the door")
+                    if "outdoor" in next_vertex and not any("выйдите" in instr for instr in instructions[-2:]):
+                        instructions.append("Выйдите из здания через дверь")
+                    elif "outdoor" in vertex and not any("войдите" in instr for instr in instructions[-2:]):
+                        instructions.append("Войдите в здание через дверь")
 
         if floor_points:
             result.append({"floor": current_floor, "points": floor_points})
@@ -132,15 +142,15 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     prev_angle = math.degrees(math.atan2(prev_dy, prev_dx))
                     turn_angle = (angle - prev_angle + 180) % 360 - 180
                     if -45 <= turn_angle <= 45:
-                        direction = "straight"
+                        direction = "идите прямо"
                     elif 45 < turn_angle <= 135:
-                        direction = "turn left"
+                        direction = "поверните налево"
                     elif -135 <= turn_angle < -45:
-                        direction = "turn right"
+                        direction = "поверните направо"
                     else:
-                        direction = "turn around"
+                        direction = "развернитесь"
                 else:
-                    direction = "start walking"
+                    direction = "начните движение"
 
                 directions.append(direction)
 
@@ -149,12 +159,15 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         final_instructions = []
         for instr in instructions:
             final_instructions.append(instr)
-            if "via stairs" not in instr and "building" not in instr and direction_idx < len(directions):
-                final_instructions.append(f"Then {directions[direction_idx]}")
+            if "лестнице" not in instr and "здания" not in instr and direction_idx < len(directions):
+                final_instructions.append(f"{directions[direction_idx].title()}")
                 direction_idx += 1
         while direction_idx < len(directions):
-            final_instructions.append(directions[direction_idx])
+            final_instructions.append(directions[direction_idx].title())
             direction_idx += 1
+
+        # Завершающая инструкция с указанием конечного кабинета
+        final_instructions.append(f"Вы прибыли в {end_name}")
 
         logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
         return {"path": result, "weight": weight, "instructions": final_instructions}

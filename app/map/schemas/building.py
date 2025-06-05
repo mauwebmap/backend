@@ -3,10 +3,7 @@ from typing import Optional
 
 # Базовая схема для зданий
 class BuildingBase(BaseModel):
-    """
-    Базовая схема для создания и чтения зданий.
-    Содержит основные поля модели Building.
-    """
+
     campus_id: int = Field(
         ...,
         description="ID кампуса, к которому относится здание"
@@ -32,18 +29,12 @@ class BuildingBase(BaseModel):
 
 # Схема для создания здания
 class BuildingCreate(BuildingBase):
-    """
-    Схема для создания нового здания.
-    Наследуется от BuildingBase.
-    """
+
     pass
 
 # Схема для обновления здания
 class BuildingUpdate(BaseModel):
-    """
-    Схема для обновления существующего здания.
-    Все поля опциональны.
-    """
+
     campus_id: Optional[int] = Field(
         None,
         description="ID кампуса, к которому относится здание"
@@ -65,10 +56,7 @@ class BuildingUpdate(BaseModel):
 
 # Схема для ответа (чтение данных)
 class BuildingResponse(BuildingBase):
-    """
-    Схема для возврата данных о здании.
-    Добавлены поля id и image_path.
-    """
+
     id: int = Field(..., description="Уникальный идентификатор здания")
     image_path: Optional[str] = Field(
         None,

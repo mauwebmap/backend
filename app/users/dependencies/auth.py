@@ -45,12 +45,10 @@ def set_auth_cookies(response: Response, access: str, refresh: str):
     )
 
 async def get_token(request: Request) -> str | None:
-    """Получает access_token из куки или заголовка."""
     return request.cookies.get("access_token") or \
            (request.headers.get("Authorization") or "").replace("Bearer ", "") or None
 
 async def refresh_access_token(request: Request, response: Response, db: Session) -> str:
-    """Обновляет access_token и refresh_token по refresh_token, возвращает новый access_token."""
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Отсутствует refresh_token")
