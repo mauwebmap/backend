@@ -143,9 +143,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     turn_angle = (angle - prev_angle + 180) % 360 - 180
                     if -45 <= turn_angle <= 45:
                         direction = "Идите прямо"
-                    elif 45 < turn_angle <= 135:
-                        direction = "Поверните налево"
                     elif -135 <= turn_angle < -45:
+                        direction = "Поверните налево"
+                    elif 45 < turn_angle <= 135:
                         direction = "Поверните направо"
                     else:
                         direction = "Развернитесь"
@@ -155,8 +155,11 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
                 directions.append(direction)
 
-        # Формирование итоговых инструкций
+        # Формирование итоговых инструкций с приоритетом начала
         final_instructions = []
+        if directions and "Начните движение" in directions[0]:
+            final_instructions.append(directions[0])
+            directions = directions[1:]
         instr_idx = 0
         dir_idx = 0
         while instr_idx < len(instructions) or dir_idx < len(directions):
