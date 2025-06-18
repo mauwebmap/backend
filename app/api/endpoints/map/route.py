@@ -48,14 +48,24 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     rooms = {f"room_{room.id}": room for room in db.query(Room).all()}
 
     try:
+        # Фильтрация пути с учётом допустимого смещения (5 единиц)
+        filtered_points = []
         for i, vertex in enumerate(path):
             vertex_data = graph.get_vertex_data(vertex)
             if not vertex_data or "coords" not in vertex_data:
                 logger.error(f"Отсутствуют данные для вершины {vertex}")
                 raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
+            x, y, floor = vertex_data["coords"]
+            if not filtered_points or all(
+                abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5
+                for fp in filtered_points
+            ):
+                filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
 
-            floor = vertex_data["coords"][2] if vertex_data["coords"][2] is not None else 1
-            x, y = vertex_data["coords"][0], vertex_data["coords"][1]
+        # Обработка отфильтрованного пути
+        for i, point in enumerate(filtered_points):
+            vertex = point["vertex"]
+            x, y, floor = point["x"], point["y"], point["floor"]
 
             if vertex not in seen_vertices:
                 if floor != current_floor:
@@ -66,11 +76,12 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 floor_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
                 seen_vertices.add(vertex)
 
-            if i < len(path) - 1:
-                next_vertex = path[i + 1]
+            if i < len(filtered_points) - 1:
+                next_point = filtered_points[i + 1]
+                next_vertex = next_point["vertex"]
                 edge_data = graph.get_edge_data(vertex, next_vertex)
                 if edge_data.get("type") == "лестница":
-                    prev_floor = graph.get_vertex_data(path[i - 1])["coords"][2] if i > 0 else floor
+                    prev_floor = filtered_points[i - 1]["floor"] if i > 0 else floor
                     direction = "вверх" if floor > prev_floor else "вниз"
 
                     if "stair" in vertex:
