@@ -59,6 +59,12 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             if i < len(path) - 1 and "phantom_room" in vertex and "segment" in path[i + 1] and path[i + 1].endswith(("_start", "_end")):
                 skip_next = True
                 continue
+            # Пропускаем лишние лестничные точки, сохраняя только ключевые
+            if i < len(path) - 1 and "phantom_stair" in vertex and "phantom_stair" in path[i + 1]:
+                next_vertex = path[i + 1]
+                next_data = graph.get_vertex_data(next_vertex)
+                if next_data["coords"][2] == floor:  # Если на том же этаже, пропускаем
+                    continue
             if not filtered_points or all(
                 abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5
                 for fp in filtered_points
@@ -84,8 +90,8 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 edge_data = graph.get_edge_data(vertex, next_vertex)
                 if edge_data.get("type") == "лестница":
                     prev_floor = filtered_points[i - 1]["floor"] if i > 0 else floor
-                    direction = "вверх" if floor > prev_floor else "вниз"
-                    instructions.append(f"{'Поднимитесь' if direction == 'вверх' else 'Спуститесь'} по лестнице с {prev_floor}-го на {floor}-й этаж")
+                    direction = "вверх" if next_point["floor"] > prev_floor else "вниз"
+                    instructions.append(f"{'Поднимитесь' if direction == 'вверх' else 'Спуститесь'} по лестнице с {prev_floor}-го на {next_point['floor']}-й этаж")
                 elif edge_data.get("type") == "дверь":
                     if "outdoor" in next_vertex and not any("выйдите" in instr.lower() for instr in instructions[-2:]):
                         instructions.append("Выйдите из здания через дверь")

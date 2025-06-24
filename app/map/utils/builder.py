@@ -37,7 +37,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     logger.info(f"Актуальные ID зданий: {building_ids}, этажей: {floor_ids}")
 
     # Определяем, нужно ли включать уличные сегменты
-    include_outdoor = len(building_ids) > 1  # Если здания разные, включаем уличные сегменты
+    include_outdoor = len(building_ids) > 1
 
     # Добавление комнат
     rooms = db.query(Room).filter(Room.building_id.in_(building_ids)).all()
@@ -92,8 +92,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 floor_number = floor.floor_number if floor else room.floor_id
                 segment_data = db.query(Segment).filter(Segment.id == conn.segment_id).first()
                 if segment_data:
-                    # Определяем координаты фантомной точки на линии сегмента
-                    t = 0.5  # Размещаем точку в середине сегмента
+                    t = 0.5
                     x = segment_data.start_x + t * (segment_data.end_x - segment_data.start_x)
                     y = segment_data.start_y + t * (segment_data.end_y - segment_data.start_y)
                     coords = (x, y, floor_number)
@@ -102,8 +101,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_vertex(phantom_vertex, {"coords": coords, "building_id": room.building_id})
                 weight = conn.weight if conn.weight else 2.0
                 graph.add_edge(room_vertex, phantom_vertex, weight, {"type": "phantom"})
-                # Увеличиваем вес соединений с началом/концом сегмента, чтобы избежать их посещения
-                segment_weight = weight * 1.5  # Увеличиваем вес на 50%
+                segment_weight = weight * 1.5
                 graph.add_edge(phantom_vertex, segment_start, segment_weight, {"type": "segment"})
                 graph.add_edge(phantom_vertex, segment_end, segment_weight, {"type": "segment"})
 
@@ -121,11 +119,12 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
             if from_segment and to_segment:
-                # Координаты фантомной точки лестницы берем из конца сегмента from
+                # Используем координаты конца from_segment для лестницы
                 x = from_segment.end_x
                 y = from_segment.end_y
                 from_coords = (x, y, from_floor)
                 to_coords = (x, y, to_floor)
+                logger.info(f"Лестница {phantom_from}: coords={from_coords}, {phantom_to}: coords={to_coords}")
                 graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
                 graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
                 weight = conn.weight if conn.weight else 2.0
