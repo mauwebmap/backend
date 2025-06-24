@@ -6,6 +6,8 @@ from app.database.database import get_db
 from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
+from app.map.models.connection import Connection
+
 from app.map.models.floor import Floor
 from app.map.utils.graph import Graph
 
@@ -13,11 +15,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 PIXEL_TO_METER = 0.05  # 1 пиксель = 0.05 метра
 
-def filter_path_points(graph: Graph, path: list) -> list:
-    """Фильтрует точки пути, убирая дубликаты, лестницы на одном этаже и зигзаги."""
+def filter_path_points(graph: Graph, path: list, db: Session) -> list:
+    """Фильтрует точки пути, убирая дубликаты и лишние сегменты."""
     filtered_points = []
     seen_vertices = set()
     skip_next = False
+    connections = db.query(Connection).all()
     for i, vertex in enumerate(path):
         if skip_next:
             skip_next = False
@@ -28,33 +31,17 @@ def filter_path_points(graph: Graph, path: list) -> list:
             raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
         x, y, floor = vertex_data["coords"]
 
-        # Пропускаем лестничные точки на том же этаже
-        is_stair = "stair" in vertex
-        if is_stair and i < len(path) - 1:
+        # Пропускаем segment_X_start/end, если они не являются лестничными
+        if i < len(path) - 1 and "phantom_room" in vertex and "segment" in path[i + 1] and path[i + 1].endswith(("_start", "_end")):
             next_vertex = path[i + 1]
-            next_data = graph.get_vertex_data(next_vertex)
-            if next_data and next_data["coords"][2] == floor:  # Тот же этаж
+            if not any(conn.from_segment_id == int(next_vertex.split("_")[1]) and conn.type == "лестница" for conn in connections):
                 skip_next = True
                 continue
 
-        # Проверяем зигзаг: если следующая точка возвращается к предыдущей y с изменением направления
-        if i > 0 and i < len(path) - 1:
-            prev_data = graph.get_vertex_data(path[i - 1])
-            next_data = graph.get_vertex_data(path[i + 1])
-            if prev_data and next_data and prev_data["coords"][1] == y == next_data["coords"][1]:
-                dx_prev = x - prev_data["coords"][0]
-                dx_next = next_data["coords"][0] - x
-                if dx_prev * dx_next < 0:  # Изменение направления (зигзаг)
-                    continue
-
-        # Убираем лишние точки после входа, если они не ведут к цели
-        if i > 0 and "outdoor" in prev_data.get("vertex", "") and "дверь" in graph.get_edge_data(vertex, path[i + 1]).get("type", ""):
-            continue  # Пропускаем первую точку после входа, если она не нужна
-
-        if vertex not in seen_vertices and (not filtered_points or all(
-            abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5 or fp["floor"] != floor
+        if not filtered_points or all(
+            abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5 or floor != fp["floor"]
             for fp in filtered_points
-        )):
+        ):
             filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
             seen_vertices.add(vertex)
 
@@ -84,17 +71,15 @@ def generate_directions(graph: Graph, filtered_points: list, rooms: dict, start:
             next_point = filtered_points[i + 1]
             next_vertex = next_point["vertex"]
             edge_data = graph.get_edge_data(vertex, next_vertex)
-            if edge_data.get("type") == "лестница" and "stair_end" in next_vertex and "from" in next_vertex:
+            if edge_data.get("type") == "лестница":
                 prev_floor = filtered_points[i - 1]["floor"] if i > 0 else floor
-                if prev_floor != next_point["floor"]:
-                    direction = "вверх" if next_point["floor"] > prev_floor else "вниз"
-                    if not any("лестнице" in instr.lower() for instr in instructions[-1:]):
-                        instructions.append(f"На {prev_floor}-м этаже спуститесь по лестнице на {next_point['floor']}-й этаж" if direction == "вниз" else f"На {prev_floor}-м этаже поднимитесь по лестнице на {next_point['floor']}-й этаж")
+                direction = "вверх" if next_point["floor"] > prev_floor else "вниз"
+                instructions.append(f"{'Поднимитесь' if direction == 'вверх' else 'Спуститесь'} по лестнице с {prev_floor}-го на {next_point['floor']}-й этаж")
             elif edge_data.get("type") == "дверь":
-                if "outdoor" in next_vertex and not any("выйдите" in instr.lower() for instr in instructions[-1:]):
-                    instructions.append(f"На {floor}-м этаже выйдите из здания через дверь")
-                elif "outdoor" in vertex and not any("войдите" in instr.lower() for instr in instructions[-1:]):
-                    instructions.append(f"На {floor}-м этаже войдите в здание через дверь")
+                if "outdoor" in next_vertex and not any("выйдите" in instr.lower() for instr in instructions[-2:]):
+                    instructions.append("Выйдите из здания через дверь")
+                elif "outdoor" in vertex and not any("войдите" in instr.lower() for instr in instructions[-2:]):
+                    instructions.append("Войдите в здание через дверь")
 
     if floor_points:
         result.append({"floor": current_floor, "points": floor_points})
@@ -108,38 +93,37 @@ def generate_directions(graph: Graph, filtered_points: list, rooms: dict, start:
 
             dx = next_point["x"] - current["x"]
             dy = next_point["y"] - current["y"]
-            distance = round(math.sqrt(dx**2 + dy**2) * PIXEL_TO_METER)
-            if distance < 1:
+
+            # Проверяем, что движение происходит по прямым углам
+            if abs(dx) > 5 and abs(dy) > 5:
+                logger.warning(f"Непрямой угол между {current['vertex']} и {next_point['vertex']}: dx={dx}, dy={dy}")
                 continue
-            angle = math.degrees(math.atan2(dy, dx))
 
             if prev_point:
                 prev_dx = current["x"] - prev_point["x"]
                 prev_dy = current["y"] - prev_point["y"]
-                prev_angle = math.degrees(math.atan2(prev_dy, prev_dx))
-                turn_angle = (angle - prev_angle + 180) % 360 - 180
-                if abs(dx) > 5 and abs(dy) > 5:
-                    logger.warning(f"Непрямой угол между {current['vertex']} и {next_point['vertex']}: dx={dx}, dy={dy}")
+                if abs(prev_dx) > 5 and abs(prev_dy) > 5:
+                    logger.warning(f"Непрямой угол в предыдущем шаге: dx={prev_dx}, dy={prev_dy}")
                     continue
-                if -45 <= turn_angle <= 45:
-                    direction = f"Идите прямо {distance} метров"
-                elif -135 <= turn_angle < -45:
-                    direction = f"Поверните налево и идите {distance} метров"
-                elif 45 < turn_angle <= 135:
-                    direction = f"Поверните направо и идите {distance} метров"
+                if abs(dx) > 5 and abs(prev_dx) > 5:
+                    direction = "Идите прямо"
+                elif abs(dy) > 5 and abs(prev_dy) > 5:
+                    direction = "Идите прямо"
+                elif (abs(dx) > 5 and abs(prev_dy) > 5) or (abs(dy) > 5 and abs(prev_dx) > 5):
+                    direction = "Поверните налево" if (dx > 0 and prev_dy > 0) or (dx < 0 and prev_dy < 0) or (dy > 0 and prev_dx < 0) or (dy < 0 and prev_dx > 0) else "Поверните направо"
                 else:
-                    continue
+                    direction = "Идите прямо"
             else:
                 if not start_room_added:
                     room = rooms.get(start)
-                    direction = f"На {floor_data['floor']}-м этаже начните движение из {room.name} {room.cab_id} кабинет"
+                    direction = f"Начните движение из {room.name} {room.cab_id} кабинет"
                     start_room_added = True
                 else:
                     continue
             directions.append(direction)
 
     final_instructions = []
-    if directions:
+    if directions and "Начните движение" in directions[0]:
         final_instructions.append(directions[0])
         directions = directions[1:]
     instr_idx = 0
@@ -148,12 +132,12 @@ def generate_directions(graph: Graph, filtered_points: list, rooms: dict, start:
         if instr_idx < len(instructions):
             final_instructions.append(instructions[instr_idx])
             instr_idx += 1
-        if dir_idx < len(directions):
+        if dir_idx < len(directions) and (instr_idx >= len(instructions) or "лестнице" not in instructions[instr_idx - 1].lower() and "дверь" not in instructions[instr_idx - 1].lower()):
             final_instructions.append(directions[dir_idx])
             dir_idx += 1
 
     if end in rooms:
-        final_instructions.append(f"На {end_floor_number}-м этаже вы прибыли в {rooms[end].name} {rooms[end].cab_id} кабинет")
+        final_instructions.append(f"Вы прибыли в {rooms[end].name} {rooms[end].cab_id} кабинет")
 
     return final_instructions, result
 
@@ -190,7 +174,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         logger.error(f"Ошибка при получении end_floor_number для {end}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Ошибка при получении этажа конечной комнаты: {str(e)}")
 
-    filtered_points = filter_path_points(graph, path)
+    filtered_points = filter_path_points(graph, path, db)
     final_instructions, result = generate_directions(graph, filtered_points, rooms, start, end, end_floor_number)
 
     logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
