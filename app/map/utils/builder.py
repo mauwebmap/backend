@@ -68,32 +68,23 @@ def add_room_connections(graph: Graph, db: Session, rooms: list, segments: dict)
                 floor_number = floor.floor_number if floor else room.floor_id
                 segment_data = db.query(Segment).filter(Segment.id == conn.segment_id).first()
                 if segment_data:
-                    stair_conn = db.query(Connection).filter(
-                        Connection.type == "лестница",
-                        Connection.from_segment_id == conn.segment_id
-                    ).first()
-                    if stair_conn:
-                        x = segment_data.end_x
-                        y = segment_data.end_y
+                    if segment_data.start_x == segment_data.end_x:
+                        x = segment_data.start_x
+                        y = room.cab_y
                     else:
-                        if segment_data.start_x == segment_data.end_x:
-                            x = segment_data.start_x
-                            y = room.cab_y
-                        else:
-                            x = room.cab_x
-                            y = segment_data.start_y
+                        x = room.cab_x
+                        y = segment_data.start_y
                     coords = (x, y, floor_number)
                 else:
                     coords = (room.cab_x, room.cab_y, floor_number)
                 graph.add_vertex(phantom_vertex, {"coords": coords, "building_id": room.building_id})
                 weight = conn.weight if conn.weight else 2.0
                 graph.add_edge(room_vertex, phantom_vertex, weight, {"type": "phantom"})
-                segment_weight = weight * 1.5
-                graph.add_edge(phantom_vertex, segment_start, segment_weight, {"type": "segment"})
-                graph.add_edge(phantom_vertex, segment_end, segment_weight, {"type": "segment"})
+                graph.add_edge(phantom_vertex, segment_start, weight, {"type": "segment"})
+                graph.add_edge(phantom_vertex, segment_end, weight, {"type": "segment"})
 
 def add_stairs_and_doors(graph: Graph, db: Session, segments: dict, floor_numbers: dict, outdoor_segments: dict, include_outdoor: bool) -> None:
-    """Добавляет лестницы и двери в граф с правильным выравниванием Y."""
+    """Добавляет лестницы и двери в граф с выравниванием Y."""
     for conn in db.query(Connection).all():
         if conn.from_segment_id and conn.to_segment_id:
             if conn.from_segment_id not in segments or conn.to_segment_id not in segments:
@@ -105,21 +96,23 @@ def add_stairs_and_doors(graph: Graph, db: Session, segments: dict, floor_number
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
             if from_segment and to_segment:
-                # Выравниваем Y с лестницей, X берем с сегмента
-                stair_y = from_segment.end_y  # Используем Y конца from_segment как опорную точку лестницы
-                # Находим X на основе пересечения с сегментом (пока берем среднее, можно уточнить логику)
+                # Выравниваем Y с лестницей (берем Y конца from_segment)
+                stair_y = from_segment.end_y
+                # X определяем как среднее значение сегмента для простоты (можно доработать)
                 stair_x = (from_segment.start_x + from_segment.end_x) / 2
                 from_coords = (stair_x, stair_y, from_floor)
                 to_coords = (stair_x, stair_y, to_floor)
+                # Добавляем фантомные точки для перехода к лестнице
                 phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
                 phantom_to = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
                 logger.info(f"Лестница {phantom_from}: coords={from_coords}, {phantom_to}: coords={to_coords}")
                 graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
                 graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
                 weight = conn.weight if conn.weight else 2.0
-                graph.add_edge(from_end, phantom_from, weight, {"type": "segment"})
+                # Соединяем только с концом сегмента, добавляя переход
+                graph.add_edge(from_end, phantom_from, weight, {"type": "segment_to_stair"})
                 graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
-                graph.add_edge(phantom_to, to_end, weight, {"type": "segment"})
+                graph.add_edge(phantom_to, to_end, weight, {"type": "stair_to_segment"})
         elif include_outdoor and conn.from_segment_id and conn.to_outdoor_id:
             if conn.from_segment_id not in segments or conn.to_outdoor_id not in outdoor_segments:
                 continue
