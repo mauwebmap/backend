@@ -16,7 +16,6 @@ class ConnectionCreate(BaseModel):
 # Базовая схема для комнат
 class RoomBase(BaseModel):
     building_id: int = Field(..., description="ID здания, к которому относится комната")
-    floor_id: int = Field(..., description="ID этажа, к которому относится комната")
     name: str = Field(..., description="Название комнаты")
     cab_id: str = Field(..., description="Кабинетный номер")
     coordinates: Optional[List[Coordinates]] = Field(None, description="Координаты комнаты")
@@ -26,12 +25,13 @@ class RoomBase(BaseModel):
 
 # Схема для создания комнаты
 class RoomCreate(RoomBase):
+    floor_number: int = Field(..., description="Номер этажа, к которому относится комната")
     connections: List[ConnectionCreate] = Field([], description="Список соединений с коридорами")
 
 # Схема для обновления комнаты
 class RoomUpdate(RoomBase):
     building_id: Optional[int] = Field(None, description="ID здания, к которому относится комната")
-    floor_id: Optional[int] = Field(None, description="ID этажа, к которому относится комната")
+    floor_number: Optional[int] = Field(None, description="Номер этажа, к которому относится комната")
     name: Optional[str] = Field(None, description="Название комнаты")
     cab_id: Optional[str] = Field(None, description="Кабинетный номер")
     coordinates: Optional[List[Coordinates]] = Field(None, description="Координаты комнаты")
@@ -43,6 +43,7 @@ class RoomUpdate(RoomBase):
 # Схема для ответа
 class RoomResponse(RoomBase):
     id: int = Field(..., description="Уникальный идентификатор комнаты")
+    floor_id: int = Field(..., description="ID этажа, к которому относится комната")
     floor_number: int = Field(..., description="Номер этажа, к которому относится комната")
     connections: List[ConnectionCreate] = Field([], description="Список соединений с коридорами")
     image_path: Optional[str] = Field(None, description="Путь к изображению комнаты")
@@ -62,6 +63,7 @@ class RoomSearchResponse(BaseModel):
     cab_x: Optional[float] = None
     cab_y: Optional[float] = None
     description: Optional[str] = None
+    image_path: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -123,12 +123,32 @@ def search_rooms_by_name_or_cab_id(db: Session, query: str, campus_id: Optional[
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при поиске комнат: {str(e)}")
 
+
 async def create_room(db: Session, room_data: RoomCreate, image_file: Optional[UploadFile] = None):
     # Исключаем connections из словаря, так как это не поле модели Room
-    room_dict = room_data.dict(exclude={"connections"})
+    room_dict = room_data.dict(exclude={"connections", "floor_number"})
 
-    # Обрабатываем coordinates (они уже в формате List[Coordinates], преобразуем в JSON для хранения)
-    if room_data.coordinates:
+    # Находим floor_id по building_id и floor_number
+    floor = db.query(Floor).filter(
+        Floor.building_id == room_data.building_id,
+        Floor.floor_number == room_data.floor_number
+    ).first()
+    if not floor:
+        raise HTTPException(status_code=400, detail="Этаж с указанным номером и зданием не найден")
+
+    room_dict["floor_id"] = floor.id
+
+    # Автоматическая генерация координат, если не переданы
+    if not room_data.coordinates and room_data.cab_x is not None and room_data.cab_y is not None:
+        cab_x = room_data.cab_x
+        cab_y = room_data.cab_y
+        room_dict["coordinates"] = [
+            {"x": cab_x - 10, "y": cab_y - 10},  # Верхний левый
+            {"x": cab_x + 10, "y": cab_y - 10},  # Верхний правый
+            {"x": cab_x - 10, "y": cab_y + 10},  # Нижний левый
+            {"x": cab_x + 10, "y": cab_y + 10}  # Нижний правый
+        ]
+    elif room_data.coordinates:
         room_dict["coordinates"] = [coord.dict() for coord in room_data.coordinates]
 
     # Обрабатываем image_file
@@ -139,13 +159,13 @@ async def create_room(db: Session, room_data: RoomCreate, image_file: Optional[U
         image_path = os.path.join(ROOM_IMAGE_DIR, image_filename)
         os.makedirs(ROOM_IMAGE_DIR, exist_ok=True)
         with open(image_path, "wb") as buffer:
-            content = image_file.file.read()  # Без await, как мы решили ранее
+            content = image_file.file.read()  # Без await
             if not content:
                 raise HTTPException(status_code=400, detail="Файл изображения пустой")
             buffer.write(content)
         room_dict["image_path"] = f"/{image_path}"
 
-    # Создаём комнату
+    # Создаем комнату
     db_room = Room(**room_dict)
     db.add(db_room)
     db.flush()
@@ -166,6 +186,9 @@ async def create_room(db: Session, room_data: RoomCreate, image_file: Optional[U
 
     db.commit()
     db.refresh(db_room)
+
+    # Добавляем floor_number к объекту для соответствия RoomResponse
+    db_room.floor_number = floor.floor_number
     return db_room
 
 async def update_room(db: Session, room_id: int, room_data: RoomUpdate, image_file: Optional[UploadFile] = None):

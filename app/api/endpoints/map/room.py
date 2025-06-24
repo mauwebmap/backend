@@ -73,7 +73,7 @@ async def create_room_endpoint(
     request: Request,
     response: Response,
     building_id: int = Form(..., description="ID здания, к которому относится комната"),
-    floor_id: int = Form(..., description="ID этажа, к которому относится комната"),
+    floor_number: int = Form(..., description="Номер этажа, к которому относится комната"),
     name: str = Form(..., description="Название комнаты"),
     cab_id: str = Form(..., description="Кабинетный номер"),
     cab_x: Optional[float] = Form(None, description="Координата X входа в кабинет"),
@@ -90,19 +90,22 @@ async def create_room_endpoint(
         # Парсим coordinates из JSON-строки
         coordinates_list = [Coordinates(**coord) for coord in json.loads(coordinates)] if coordinates else None
 
+        # Парсим connections из JSON-строки
+        connections_list = [ConnectionCreate(**conn) for conn in json.loads(connections)] if connections else []
+
         # Формируем объект RoomCreate
         room_data = RoomCreate(
             building_id=building_id,
-            floor_id=floor_id,
+            floor_number=floor_number,
             name=name,
             cab_id=cab_id,
             cab_x=cab_x,
             cab_y=cab_y,
             description=description,
             coordinates=coordinates_list,
-            connections=[ConnectionCreate(**conn) for conn in json.loads(connections)] if connections else []
+            connections=connections_list
         )
-        # Создаём комнату
+        # Создаем комнату
         room = await create_room(db=db, room_data=room_data, image_file=image_file)
         if new_access_token:
             response.headers["X-New-Access-Token"] = new_access_token
