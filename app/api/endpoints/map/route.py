@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/route")
-async def get_route(start: str, end: str, db: Session = Depends(get_db), end_floor_number=None):
+async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     logger.info(f"Получен запрос на построение маршрута от {start} до {end}")
 
     try:
@@ -41,8 +41,8 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db), end_flo
 
     connections = db.query(Connection).all()
     rooms = {f"room_{room.id}": room for room in db.query(Room).all()}
-    # Масштаб: 1 пиксель = 0.1 метра
-    PIXEL_TO_METER = 0.1
+    # Масштаб: 1 пиксель = 0.5 метра
+    PIXEL_TO_METER = 0.5
 
     try:
         filtered_points = []
@@ -58,6 +58,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db), end_flo
             ):
                 filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
 
+        start_room_added = False
         for i, point in enumerate(filtered_points):
             vertex = point["vertex"]
             x, y, floor = point["x"], point["y"], point["floor"]
@@ -75,7 +76,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db), end_flo
                 next_point = filtered_points[i + 1]
                 next_vertex = next_point["vertex"]
                 edge_data = graph.get_edge_data(vertex, next_vertex)
-                if edge_data.get("type") == "лестница" and "stair_end" in next_vertex:
+                if edge_data.get("type") == "лестница" and "stair_end" in next_vertex and "from" in next_vertex:
                     prev_floor = filtered_points[i - 1]["floor"] if i > 0 else floor
                     direction = "вверх" if next_point["floor"] > prev_floor else "вниз"
                     if not any("лестнице" in instr.lower() for instr in instructions[-1:]):
@@ -90,7 +91,6 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db), end_flo
             result.append({"floor": current_floor, "points": floor_points})
 
         directions = []
-        start_room_added = False
         for floor_data in result:
             floor_points = floor_data["points"]
             for j in range(len(floor_points) - 1):
@@ -100,7 +100,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db), end_flo
 
                 dx = next_point["x"] - current["x"]
                 dy = next_point["y"] - current["y"]
-                distance = round(math.sqrt(dx**2 + dy**2) * PIXEL_TO_METER, 1)
+                distance = round(math.sqrt(dx**2 + dy**2) * PIXEL_TO_METER)
+                if distance < 1:
+                    continue  # Пропускаем шаги короче 1 метра
                 angle = math.degrees(math.atan2(dy, dx))
 
                 if prev_point:

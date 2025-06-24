@@ -121,12 +121,11 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             stair_end_to = f"stair_end_{conn.to_segment_id}_from_{conn.from_segment_id}"
             stair_start_to = f"stair_start_{conn.to_segment_id}_from_{conn.from_segment_id}"
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
-            to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
-            if from_segment and to_segment:
-                # Координаты stair_start и stair_end на основе from_segment
+            if from_segment:
+                # Координаты лестницы на основе from_segment
                 start_coords_from = (from_segment.start_x, from_segment.start_y, from_floor)
                 end_coords_from = (from_segment.end_x, from_segment.end_y, from_floor)
-                # На целевом этаже используем те же координаты конца from_segment
+                # На целевом этаже используем координаты конца from_segment
                 end_coords_to = (from_segment.end_x, from_segment.end_y, to_floor)
                 start_coords_to = (from_segment.start_x, from_segment.start_y, to_floor)
                 logger.info(f"Лестница {stair_start_from}: coords={start_coords_from}, {stair_end_from}: coords={end_coords_from}")
