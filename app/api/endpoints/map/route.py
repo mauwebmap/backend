@@ -10,7 +10,6 @@ from app.map.models.connection import Connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-PIXEL_TO_METER = 0.5  # 1 пиксель = 0.5 метра
 
 @router.get("/route")
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
@@ -52,21 +51,11 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 logger.error(f"Отсутствуют данные для вершины {vertex}")
                 raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
             x, y, floor = vertex_data["coords"]
-            # Сохраняем точки лестниц и ключевые переходы
-            is_stair = "stair" in vertex or "phantom_stair" in vertex
-            if is_stair or (i < len(path) - 1 and ("stair" in path[i + 1] or "phantom_stair" in path[i + 1])):
-                if not filtered_points or all(
-                    abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5 or fp["floor"] != floor
-                    for fp in filtered_points
-                ):
-                    filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
-                    seen_vertices.add(vertex)
-            elif not filtered_points or all(
+            if not filtered_points or all(
                 abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5
                 for fp in filtered_points
             ):
                 filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
-                seen_vertices.add(vertex)
 
         for i, point in enumerate(filtered_points):
             vertex = point["vertex"]
@@ -109,27 +98,24 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
                 dx = next_point["x"] - current["x"]
                 dy = next_point["y"] - current["y"]
-                distance = round(math.sqrt(dx**2 + dy**2) * PIXEL_TO_METER)
-                if distance < 1:
-                    continue
-
                 angle = math.degrees(math.atan2(dy, dx))
+
                 if prev_point:
                     prev_dx = current["x"] - prev_point["x"]
                     prev_dy = current["y"] - prev_point["y"]
                     prev_angle = math.degrees(math.atan2(prev_dy, prev_dx))
                     turn_angle = (angle - prev_angle + 180) % 360 - 180
                     if -45 <= turn_angle <= 45:
-                        direction = f"Идите прямо {distance} метров"
+                        direction = "Идите прямо"
                     elif -135 <= turn_angle < -45:
-                        direction = f"Поверните налево и идите {distance} метров"
+                        direction = "Поверните налево"
                     elif 45 < turn_angle <= 135:
-                        direction = f"Поверните направо и идите {distance} метров"
+                        direction = "Поверните направо"
                     else:
-                        direction = f"Развернитесь и идите {distance} метров"
+                        direction = "Развернитесь"
                 else:
-                    room = rooms.get(start)
-                    direction = f"Начните движение из {room.name} {room.cab_id} кабинет"
+                    room = rooms.get(start) if j == 0 else rooms.get(end) if j == len(floor_points) - 2 else None
+                    direction = f"Начните движение из {room.name} {room.cab_id} кабинет" if room else "Начните движение"
 
                 directions.append(direction)
 

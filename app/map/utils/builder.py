@@ -116,23 +116,34 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             to_start, to_end = segments[conn.to_segment_id]
             from_floor = floor_numbers[conn.from_segment_id]
             to_floor = floor_numbers[conn.to_segment_id]
-            stair_start_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
-            stair_end_from = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
+            stair_start_from = f"stair_start_{conn.from_segment_id}_to_{conn.to_segment_id}"
+            stair_end_from = f"stair_end_{conn.from_segment_id}_to_{conn.to_segment_id}"
+            stair_end_to = f"stair_end_{conn.to_segment_id}_from_{conn.from_segment_id}"
+            stair_start_to = f"stair_start_{conn.to_segment_id}_from_{conn.from_segment_id}"
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
             if from_segment and to_segment:
-                # Выравниваем координаты лестницы с концом from_segment
-                stair_x = (from_segment.end_x + to_segment.start_x) / 2  # Среднее значение для плавного перехода
-                stair_y = from_segment.end_y
-                start_coords = (stair_x, stair_y, from_floor)
-                end_coords = (stair_x, stair_y, to_floor)
-                logger.info(f"Лестница {stair_start_from}: coords={start_coords}, {stair_end_from}: coords={end_coords}")
-                graph.add_vertex(stair_start_from, {"coords": start_coords, "building_id": None})
-                graph.add_vertex(stair_end_from, {"coords": end_coords, "building_id": None})
+                # Координаты stair_start и stair_end на основе from_segment
+                start_coords_from = (from_segment.start_x, from_segment.start_y, from_floor)
+                end_coords_from = (from_segment.end_x, from_segment.end_y, from_floor)
+                # На целевом этаже используем те же координаты, но с to_floor
+                end_coords_to = (from_segment.end_x, from_segment.end_y, to_floor)
+                start_coords_to = (from_segment.start_x, from_segment.start_y, to_floor)
+                logger.info(f"Лестница {stair_start_from}: coords={start_coords_from}, {stair_end_from}: coords={end_coords_from}")
+                logger.info(f"Лестница {stair_end_to}: coords={end_coords_to}, {stair_start_to}: coords={start_coords_to}")
+                graph.add_vertex(stair_start_from, {"coords": start_coords_from, "building_id": None})
+                graph.add_vertex(stair_end_from, {"coords": end_coords_from, "building_id": None})
+                graph.add_vertex(stair_end_to, {"coords": end_coords_to, "building_id": None})
+                graph.add_vertex(stair_start_to, {"coords": start_coords_to, "building_id": None})
                 weight = conn.weight if conn.weight else 2.0
-                graph.add_edge(from_end, stair_start_from, weight, {"type": "segment_to_stair"})
+                # Соединения: from_segment -> stair_start -> stair_end -> stair_end_to -> stair_start_to -> to_segment
+                graph.add_edge(from_start, stair_start_from, weight, {"type": "segment"})
+                graph.add_edge(from_end, stair_start_from, weight, {"type": "segment"})
                 graph.add_edge(stair_start_from, stair_end_from, weight, {"type": "лестница"})
-                graph.add_edge(stair_end_from, to_start, weight, {"type": "stair_to_segment"})
+                graph.add_edge(stair_end_from, stair_end_to, weight, {"type": "лестница"})
+                graph.add_edge(stair_end_to, stair_start_to, weight, {"type": "лестница"})
+                graph.add_edge(stair_start_to, to_start, weight, {"type": "segment"})
+                graph.add_edge(stair_start_to, to_end, weight, {"type": "segment"})
         elif include_outdoor and conn.from_segment_id and conn.to_outdoor_id:
             if conn.from_segment_id not in segments or conn.to_outdoor_id not in outdoor_segments:
                 continue
