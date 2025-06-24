@@ -64,9 +64,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                     next_vertex = path[i + 1]
                     next_vertex_data = graph.get_vertex_data(next_vertex)
                     if next_vertex_data and next_vertex_data["coords"][2] != floor:  # Переход на другой этаж
-                        last_stair_coords = (x, y, next_vertex_data["coords"][2])  # Сохраняем координаты для нового этажа
-                        continue  # Пропускаем эту точку, ждём следующую после лестницы
-                elif last_stair_coords:  # Если это последняя точка лестницы
+                        last_stair_coords = (x, y, next_vertex_data["coords"][2])  # Сохраняем координаты с новым floor
+                        continue  # Пропускаем, ждём следующую точку
+                elif last_stair_coords:  # Используем сохранённые координаты на новом этаже
                     x, y, floor = last_stair_coords
                     filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
                     last_stair_coords = None
@@ -111,7 +111,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         if floor_points:
             result.append({"floor": current_floor, "points": floor_points})
 
-        # Генерация направлений на основе координат
+        # Генерация направлений
         directions = []
         for floor_data in result:
             floor_points = floor_data["points"]
@@ -143,7 +143,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
                 directions.append(direction)
 
-        # Формирование итоговых инструкций с приоритетом начала
+        # Формирование инструкций
         final_instructions = []
         if directions and "Начните движение" in directions[0]:
             final_instructions.append(directions[0])
@@ -158,7 +158,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 final_instructions.append(directions[dir_idx])
                 dir_idx += 1
 
-        # Добавляем пункт прибытия
+        # Пункт прибытия
         if end in rooms:
             final_instructions.append(f"Вы прибыли в {rooms[end].name} {rooms[end].cab_id} кабинет")
 
