@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/route")
-async def get_route(start: str, end: str, db: Session = Depends(get_db)):
+async def get_route(start: str, end: str, db: Session = Depends(get_db), end_floor_number=None):
     logger.info(f"Получен запрос на построение маршрута от {start} до {end}")
 
     try:
