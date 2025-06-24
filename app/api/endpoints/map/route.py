@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/route")
-async def get_route(start: str, end: str, db: Session = Depends(get_db)):
+async def get_route(start: str, end: str, db: Session = Depends(get_db), end_floor_number=None):
     logger.info(f"Получен запрос на построение маршрута от {start} до {end}")
 
     try:
@@ -40,29 +40,20 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     seen_vertices = set()
 
     connections = db.query(Connection).all()
-    stair_connections = {(conn.from_segment_id, conn.to_segment_id): conn for conn in connections if conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id}
     rooms = {f"room_{room.id}": room for room in db.query(Room).all()}
+    # Масштаб: 1 пиксель = 0.1 метра
+    PIXEL_TO_METER = 0.1
 
     try:
         filtered_points = []
-        skip_next = False
         for i, vertex in enumerate(path):
-            if skip_next:
-                skip_next = False
-                continue
             vertex_data = graph.get_vertex_data(vertex)
             if not vertex_data or "coords" not in vertex_data:
                 logger.error(f"Отсутствуют данные для вершины {vertex}")
                 raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
             x, y, floor = vertex_data["coords"]
-            # Пропускаем segment_X_start/end, если они не являются лестничными
-            if i < len(path) - 1 and "phantom_room" in vertex and "segment" in path[i + 1] and path[i + 1].endswith(("_start", "_end")):
-                next_vertex = path[i + 1]
-                if not any(conn.from_segment_id == int(next_vertex.split("_")[1]) and conn.type == "лестница" for conn in connections):
-                    skip_next = True
-                    continue
             if not filtered_points or all(
-                abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5 or floor != fp["floor"]
+                abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5
                 for fp in filtered_points
             ):
                 filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
@@ -84,20 +75,22 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 next_point = filtered_points[i + 1]
                 next_vertex = next_point["vertex"]
                 edge_data = graph.get_edge_data(vertex, next_vertex)
-                if edge_data.get("type") == "лестница":
+                if edge_data.get("type") == "лестница" and "stair_end" in next_vertex:
                     prev_floor = filtered_points[i - 1]["floor"] if i > 0 else floor
                     direction = "вверх" if next_point["floor"] > prev_floor else "вниз"
-                    instructions.append(f"{'Поднимитесь' if direction == 'вверх' else 'Спуститесь'} по лестнице с {prev_floor}-го на {next_point['floor']}-й этаж")
+                    if not any("лестнице" in instr.lower() for instr in instructions[-1:]):
+                        instructions.append(f"На {prev_floor}-м этаже спуститесь по лестнице на {next_point['floor']}-й этаж" if direction == "вниз" else f"На {prev_floor}-м этаже поднимитесь по лестнице на {next_point['floor']}-й этаж")
                 elif edge_data.get("type") == "дверь":
-                    if "outdoor" in next_vertex and not any("выйдите" in instr.lower() for instr in instructions[-2:]):
-                        instructions.append("Выйдите из здания через дверь")
-                    elif "outdoor" in vertex and not any("войдите" in instr.lower() for instr in instructions[-2:]):
-                        instructions.append("Войдите в здание через дверь")
+                    if "outdoor" in next_vertex and not any("выйдите" in instr.lower() for instr in instructions[-1:]):
+                        instructions.append(f"На {floor}-м этаже выйдите из здания через дверь")
+                    elif "outdoor" in vertex and not any("войдите" in instr.lower() for instr in instructions[-1:]):
+                        instructions.append(f"На {floor}-м этаже войдите в здание через дверь")
 
         if floor_points:
             result.append({"floor": current_floor, "points": floor_points})
 
         directions = []
+        start_room_added = False
         for floor_data in result:
             floor_points = floor_data["points"]
             for j in range(len(floor_points) - 1):
@@ -107,34 +100,37 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
                 dx = next_point["x"] - current["x"]
                 dy = next_point["y"] - current["y"]
-
-                # Проверяем, что движение происходит по прямым углам
-                if abs(dx) > 5 and abs(dy) > 5:
-                    logger.warning(f"Непрямой угол между {current['vertex']} и {next_point['vertex']}: dx={dx}, dy={dy}")
-                    continue  # Пропускаем, если не по оси X или Y
+                distance = round(math.sqrt(dx**2 + dy**2) * PIXEL_TO_METER, 1)
+                angle = math.degrees(math.atan2(dy, dx))
 
                 if prev_point:
                     prev_dx = current["x"] - prev_point["x"]
                     prev_dy = current["y"] - prev_point["y"]
-                    if abs(prev_dx) > 5 and abs(prev_dy) > 5:
-                        logger.warning(f"Непрямой угол в предыдущем шаге: dx={prev_dx}, dy={prev_dy}")
+                    prev_angle = math.degrees(math.atan2(prev_dy, prev_dx))
+                    turn_angle = (angle - prev_angle + 180) % 360 - 180
+                    if abs(dx) > 5 and abs(dy) > 5:
+                        logger.warning(f"Непрямой угол между {current['vertex']} и {next_point['vertex']}: dx={dx}, dy={dy}")
                         continue
-                    if abs(dx) > 5 and abs(prev_dx) > 5:
-                        direction = "Идите прямо"
-                    elif abs(dy) > 5 and abs(prev_dy) > 5:
-                        direction = "Идите прямо"
-                    elif (abs(dx) > 5 and abs(prev_dy) > 5) or (abs(dy) > 5 and abs(prev_dx) > 5):
-                        direction = "Поверните налево" if (dx > 0 and prev_dy > 0) or (dx < 0 and prev_dy < 0) or (dy > 0 and prev_dx < 0) or (dy < 0 and prev_dx > 0) else "Поверните направо"
+                    if -45 <= turn_angle <= 45:
+                        direction = f"На {floor_data['floor']}-м этаже идите прямо {distance} метров"
+                    elif -135 <= turn_angle < -45:
+                        direction = f"На {floor_data['floor']}-м этаже поверните налево и идите {distance} метров"
+                    elif 45 < turn_angle <= 135:
+                        direction = f"На {floor_data['floor']}-м этаже поверните направо и идите {distance} метров"
                     else:
-                        direction = "Идите прямо"
+                        continue  # Пропускаем "Развернитесь"
                 else:
-                    room = rooms.get(start) if j == 0 else rooms.get(end) if j == len(floor_points) - 2 else None
-                    direction = f"Начните движение из {room.name} {room.cab_id} кабинет" if room else "Начните движение"
+                    if not start_room_added:
+                        room = rooms.get(start)
+                        direction = f"На {floor_data['floor']}-м этаже начните движение из {room.name} {room.cab_id} кабинет"
+                        start_room_added = True
+                    else:
+                        continue  # Пропускаем повторное "Начните движение"
 
                 directions.append(direction)
 
         final_instructions = []
-        if directions and "Начните движение" in directions[0]:
+        if directions:
             final_instructions.append(directions[0])
             directions = directions[1:]
         instr_idx = 0
@@ -143,12 +139,12 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             if instr_idx < len(instructions):
                 final_instructions.append(instructions[instr_idx])
                 instr_idx += 1
-            if dir_idx < len(directions) and (instr_idx >= len(instructions) or "лестнице" not in instructions[instr_idx - 1].lower() and "дверь" not in instructions[instr_idx - 1].lower()):
+            if dir_idx < len(directions):
                 final_instructions.append(directions[dir_idx])
                 dir_idx += 1
 
         if end in rooms:
-            final_instructions.append(f"Вы прибыли в {rooms[end].name} {rooms[end].cab_id} кабинет")
+            final_instructions.append(f"На {end_floor_number}-м этаже вы прибыли в {rooms[end].name} {rooms[end].cab_id} кабинет")
 
         logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
         return {"path": result, "weight": weight, "instructions": final_instructions}
