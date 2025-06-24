@@ -109,7 +109,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_edge(phantom_vertex, segment_start, weight, {"type": "segment"})
                 graph.add_edge(phantom_vertex, segment_end, weight, {"type": "segment"})
 
-    # Обработка соединений
     # Обработка соединений (лестниц)
     for conn in db.query(Connection).all():
         if conn.from_segment_id and conn.to_segment_id:
@@ -125,10 +124,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             to_segment = db.query(Segment).filter(Segment.id == conn.to_segment_id).first()
 
             if from_segment and to_segment:
-                # Для верхнего этажа (from_segment) — конец сегмента
+                # Точка выхода на верхнем этаже — конец сегмента
                 from_coords = (from_segment.end_x, from_segment.end_y, from_floor)
-                # Для нижнего этажа (to_segment) — начало сегмента
-                to_coords = (to_segment.start_x, to_segment.start_y, to_floor)
+                # Точка входа на нижнем этаже — те же координаты
+                to_coords = (from_segment.end_x, from_segment.end_y, to_floor)
 
                 # Создаём фантомные точки для лестницы
                 phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
@@ -136,12 +135,21 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
                 graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
 
-                # Соединяем всё правильно
+                # Переход к сегменту на нижнем этаже — сохраняем Y, подстраиваем X
+                phantom_to_segment = f"phantom_to_segment_{conn.to_segment_id}"
+                segment_x = to_segment.start_x if abs(to_segment.start_x - from_segment.end_x) < abs(
+                    to_segment.end_x - from_segment.end_x) else to_segment.end_x
+                segment_coords = (segment_x, from_segment.end_y, to_floor)
+                graph.add_vertex(phantom_to_segment, {"coords": segment_coords, "building_id": None})
+
+                # Соединяем точки
                 weight = conn.weight if conn.weight else 2.0
                 graph.add_edge(from_end, phantom_from, weight, {"type": "segment"})  # Конец сегмента 9 -> лестница
                 graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})  # Лестница вниз
-                graph.add_edge(phantom_to, to_start, weight, {"type": "segment"})  # Лестница -> начало сегмента 7
-                graph.add_edge(phantom_to, to_end, weight, {"type": "segment"})  # Для полноты пути
+                graph.add_edge(phantom_to, phantom_to_segment, weight, {"type": "segment"})  # Переход к сегменту
+                graph.add_edge(phantom_to_segment, to_start, weight,
+                               {"type": "segment"})  # Подключение к началу сегмента 7
+                graph.add_edge(phantom_to_segment, to_end, weight, {"type": "segment"})  # И к концу, для вариативности
 
         # Дверь-улица (только если нужно)
         elif include_outdoor and conn.from_segment_id and conn.to_outdoor_id:
