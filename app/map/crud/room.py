@@ -2,7 +2,7 @@ import os
 from typing import Optional, List
 from fastapi import UploadFile, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_ , select
 from app.map.models.room import Room
 from app.map.models.building import Building
 from app.map.models.floor import Floor
@@ -21,16 +21,42 @@ def get_room(db: Session, room_id: int):
     return db.query(Room).filter(Room.id == room_id).first()
 
 def get_rooms(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(Room).offset(skip).limit(limit).all()
+    try:
+        # Выполняем JOIN таблиц rooms и floors
+        query = (
+            select(Room, Floor.floor_number)
+            .join(Floor, Room.floor_id == Floor.id)
+            .offset(skip)
+            .limit(limit)
+        )
+        result = db.execute(query).all()
+        # Формируем список объектов Room с добавленным floor_number
+        rooms = [row[0] for row in result]
+        for room, floor_number in result:
+            room.floor_number = floor_number  # Добавляем floor_number к объекту Room
+        return rooms
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении комнат: {str(e)}")
 
-def get_rooms_by_floor_and_campus(db: Session, floor_id: int, campus_id: int):
-    return (
-        db.query(Room)
-        .join(Floor, Floor.id == Room.floor_id)
-        .join(Building, Building.id == Floor.building_id)
-        .filter(Floor.id == floor_id, Building.campus_id == campus_id)
-        .all()
-    )
+def get_rooms_by_floor_and_campus(db: Session, floor_number: int, campus_id: int):
+    try:
+        # Выполняем JOIN таблиц rooms, floors и buildings
+        query = (
+            select(Room, Floor.floor_number)
+            .join(Floor, Floor.id == Room.floor_id)
+            .join(Building, Building.id == Floor.building_id)
+            .filter(Floor.floor_number == floor_number, Building.campus_id == campus_id)
+        )
+        result = db.execute(query).all()
+        if not result:
+            raise HTTPException(status_code=404, detail="Комнаты для указанного этажа и кампуса не найдены")
+        # Формируем список объектов Room с добавленным floor_number
+        rooms = [row[0] for row in result]
+        for room, floor_number in result:
+            room.floor_number = floor_number  # Добавляем floor_number к объекту Room
+        return rooms
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении комнат: {str(e)}")
 
 def search_rooms_by_name_or_cab_id(db: Session, query: str, campus_id: Optional[int] = None) -> List[Room]:
     """

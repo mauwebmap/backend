@@ -88,16 +88,16 @@ def read_room(
         raise HTTPException(status_code=404, detail="Room not found")
     return room
 
-@router.get("/campus/{campus_id}/floors/{floor_id}/rooms", response_model=List[RoomResponse])
+@router.get("/campus/{campus_id}/floors/{floor_number}/rooms", response_model=List[RoomResponse])
 def read_rooms_by_floor_and_campus(
     campus_id: int,
-    floor_id: int,
+    floor_number: int,
     db: Session = Depends(get_db)
 ):
-    """Получить все комнаты на указанном этаже в кампусе. Без авторизации."""
-    rooms = get_rooms_by_floor_and_campus(db, floor_id, campus_id)
+    """Получить все комнаты на указанном этаже (по номеру этажа) в кампусе. Без авторизации."""
+    rooms = get_rooms_by_floor_and_campus(db, floor_number, campus_id)
     if not rooms:
-        raise HTTPException(status_code=404, detail="No rooms found for the given floor and campus")
+        raise HTTPException(status_code=404, detail="Комнаты для указанного этажа и кампуса не найдены")
     return rooms
 
 @router.post("/", response_model=RoomResponse)

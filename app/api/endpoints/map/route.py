@@ -15,16 +15,14 @@ router = APIRouter()
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     logger.info(f"Получен запрос на построение маршрута от {start} до {end}")
 
-    # Построение графа
-    try:
+    try: # Построение графа
         graph = build_graph(db, start, end)
         logger.info(f"Граф успешно построен: {len(graph.vertices)} вершин")
     except Exception as e:
         logger.error(f"Ошибка при построении графа: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Ошибка при построении графа: {str(e)}")
 
-    # Поиск пути
-    try:
+    try:# Поиск пути
         path, weight = find_path(graph, start, end)
         logger.info(f"Поиск пути завершён: путь={path}, вес={weight}")
     except Exception as e:
@@ -35,21 +33,18 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         logger.info(f"Путь от {start} до {end} не найден")
         raise HTTPException(status_code=404, detail="Путь не найден")
 
-    # Формирование маршрута
-    result = []
+    result = []# Формирование маршрута
     current_floor = None
     floor_points = []
     instructions = []
     seen_vertices = set()
 
-    # Загружаем соединения и комнаты
-    connections = db.query(Connection).all()
+    connections = db.query(Connection).all()# Загружаем соединения и комнаты
     stair_connections = {(conn.from_segment_id, conn.to_segment_id): conn for conn in connections if conn.type == "лестница" and conn.from_segment_id and conn.to_segment_id}
     rooms = {f"room_{room.id}": room for room in db.query(Room).all()}
 
     try:
-        # Фильтрация пути с учётом допустимого смещения (5 единиц)
-        filtered_points = []
+        filtered_points = []# Фильтрация пути с учётом допустимого смещения (5 единиц)
         for i, vertex in enumerate(path):
             vertex_data = graph.get_vertex_data(vertex)
             if not vertex_data or "coords" not in vertex_data:
@@ -62,8 +57,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
             ):
                 filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
 
-        # Обработка отфильтрованного пути
-        for i, point in enumerate(filtered_points):
+        for i, point in enumerate(filtered_points):# Обработка отфильтрованного пути
             vertex = point["vertex"]
             x, y, floor = point["x"], point["y"], point["floor"]
 
@@ -123,8 +117,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         if floor_points:
             result.append({"floor": current_floor, "points": floor_points})
 
-        # Генерация направлений на основе координат
-        directions = []
+        directions = []# Генерация направлений на основе координат
         for floor_data in result:
             floor_points = floor_data["points"]
             for j in range(len(floor_points) - 1):
@@ -155,8 +148,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
                 directions.append(direction)
 
-        # Формирование итоговых инструкций с приоритетом начала
-        final_instructions = []
+        final_instructions = []# Формирование итоговых инструкций с приоритетом начала
         if directions and "Начните движение" in directions[0]:
             final_instructions.append(directions[0])
             directions = directions[1:]
@@ -170,8 +162,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 final_instructions.append(directions[dir_idx])
                 dir_idx += 1
 
-        # Добавляем пункт прибытия
-        if end in rooms:
+        if end in rooms:# Добавляем пункт прибытия
             final_instructions.append(f"Вы прибыли в {rooms[end].name} {rooms[end].cab_id} кабинет")
 
         logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")

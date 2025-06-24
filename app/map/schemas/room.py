@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from app.map.models.enums import ConnectionType  # Импортируем перечисление типов соединений
+from app.map.models.enums import ConnectionType
 
 # Схема для координат
 class Coordinates(BaseModel):
@@ -43,18 +43,25 @@ class RoomUpdate(RoomBase):
 # Схема для ответа
 class RoomResponse(RoomBase):
     id: int = Field(..., description="Уникальный идентификатор комнаты")
+    floor_number: int = Field(..., description="Номер этажа, к которому относится комната")
     connections: List[ConnectionCreate] = Field([], description="Список соединений с коридорами")
     image_path: Optional[str] = Field(None, description="Путь к изображению комнаты")
 
+    class Config:
+        from_attributes = True
+
+# Схема для поиска комнат
 class RoomSearchResponse(BaseModel):
     id: int
     name: str
     cab_id: str
     building_id: int
-    building_name: str  # Название здания
+    building_name: str
     floor_id: int
+    floor_number: int  # Добавляем floor_number
     cab_x: Optional[float] = None
     cab_y: Optional[float] = None
     description: Optional[str] = None
+
     class Config:
         from_attributes = True
