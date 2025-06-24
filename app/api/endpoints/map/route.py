@@ -45,14 +45,24 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
     try:
         filtered_points = []
+        skip_next = False
         for i, vertex in enumerate(path):
+            if skip_next:
+                skip_next = False
+                continue
             vertex_data = graph.get_vertex_data(vertex)
             if not vertex_data or "coords" not in vertex_data:
                 logger.error(f"Отсутствуют данные для вершины {vertex}")
                 raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
             x, y, floor = vertex_data["coords"]
+            # Пропускаем segment_X_start/end, если они не являются лестничными
+            if i < len(path) - 1 and "phantom_room" in vertex and "segment" in path[i + 1] and path[i + 1].endswith(("_start", "_end")):
+                next_vertex = path[i + 1]
+                if not any(conn.from_segment_id == int(next_vertex.split("_")[1]) and conn.type == "лестница" for conn in connections):
+                    skip_next = True
+                    continue
             if not filtered_points or all(
-                abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5
+                abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5 or floor != fp["floor"]
                 for fp in filtered_points
             ):
                 filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
@@ -77,8 +87,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 if edge_data.get("type") == "лестница":
                     prev_floor = filtered_points[i - 1]["floor"] if i > 0 else floor
                     direction = "вверх" if next_point["floor"] > prev_floor else "вниз"
-                    if not any("лестнице" in instr.lower() for instr in instructions[-2:]):
-                        instructions.append(f"{'Поднимитесь' if direction == 'вверх' else 'Спуститесь'} по лестнице с {prev_floor}-го на {next_point['floor']}-й этаж")
+                    instructions.append(f"{'Поднимитесь' if direction == 'вверх' else 'Спуститесь'} по лестнице с {prev_floor}-го на {next_point['floor']}-й этаж")
                 elif edge_data.get("type") == "дверь":
                     if "outdoor" in next_vertex and not any("выйдите" in instr.lower() for instr in instructions[-2:]):
                         instructions.append("Выйдите из здания через дверь")
@@ -98,21 +107,26 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
                 dx = next_point["x"] - current["x"]
                 dy = next_point["y"] - current["y"]
-                angle = math.degrees(math.atan2(dy, dx))
+
+                # Проверяем, что движение происходит по прямым углам
+                if abs(dx) > 5 and abs(dy) > 5:
+                    logger.warning(f"Непрямой угол между {current['vertex']} и {next_point['vertex']}: dx={dx}, dy={dy}")
+                    continue  # Пропускаем, если не по оси X или Y
 
                 if prev_point:
                     prev_dx = current["x"] - prev_point["x"]
                     prev_dy = current["y"] - prev_point["y"]
-                    prev_angle = math.degrees(math.atan2(prev_dy, prev_dx))
-                    turn_angle = (angle - prev_angle + 180) % 360 - 180
-                    if -45 <= turn_angle <= 45:
+                    if abs(prev_dx) > 5 and abs(prev_dy) > 5:
+                        logger.warning(f"Непрямой угол в предыдущем шаге: dx={prev_dx}, dy={prev_dy}")
+                        continue
+                    if abs(dx) > 5 and abs(prev_dx) > 5:
                         direction = "Идите прямо"
-                    elif -135 <= turn_angle < -45:
-                        direction = "Поверните налево"
-                    elif 45 < turn_angle <= 135:
-                        direction = "Поверните направо"
+                    elif abs(dy) > 5 and abs(prev_dy) > 5:
+                        direction = "Идите прямо"
+                    elif (abs(dx) > 5 and abs(prev_dy) > 5) or (abs(dy) > 5 and abs(prev_dx) > 5):
+                        direction = "Поверните налево" if (dx > 0 and prev_dy > 0) or (dx < 0 and prev_dy < 0) or (dy > 0 and prev_dx < 0) or (dy < 0 and prev_dx > 0) else "Поверните направо"
                     else:
-                        direction = "Развернитесь"
+                        direction = "Идите прямо"
                 else:
                     room = rooms.get(start) if j == 0 else rooms.get(end) if j == len(floor_points) - 2 else None
                     direction = f"Начните движение из {room.name} {room.cab_id} кабинет" if room else "Начните движение"
