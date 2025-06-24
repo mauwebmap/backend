@@ -14,7 +14,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     logger.info(f"Начало построения графа для start={start}, end={end}")
     graph = Graph()
 
-    # Проверка начальной и конечной комнаты
     try:
         start_id = int(start.replace("room_", ""))
         end_id = int(end.replace("room_", ""))
@@ -27,7 +26,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         logger.error(f"Ошибка при парсинге ID комнат из {start} или {end}: {e}")
         raise ValueError(f"Неверный формат комнаты, ожидается room_<id>, получено {start} или {end}")
 
-    # Получение этажей
     start_floor = db.query(Floor).filter(Floor.id == start_room.floor_id).first()
     end_floor = db.query(Floor).filter(Floor.id == end_room.floor_id).first()
     start_floor_number = start_floor.floor_number if start_floor else start_room.floor_id
@@ -36,10 +34,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     floor_ids = {start_room.floor_id, end_room.floor_id}
     logger.info(f"Актуальные ID зданий: {building_ids}, этажей: {floor_ids}, start_floor_number={start_floor_number}, end_floor_number={end_floor_number}")
 
-    # Определяем, нужно ли включать уличные сегменты
     include_outdoor = len(building_ids) > 1
+    if not include_outdoor:
+        logger.info("Уличные сегменты отключены, так как комнаты в одном здании")
 
-    # Добавление комнат
     rooms = db.query(Room).filter(Room.building_id.in_(building_ids)).all()
     for room in rooms:
         if not hasattr(room, 'floor_id'):
@@ -50,7 +48,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         vertex = f"room_{room.id}"
         graph.add_vertex(vertex, {"coords": (room.cab_x, room.cab_y, floor_number), "building_id": room.building_id})
 
-    # Добавление сегментов
     segments = {}
     floor_numbers = {}
     segment_query = db.query(Segment).filter(Segment.building_id.in_(building_ids)).all()
@@ -66,7 +63,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         weight = max(0.1, math.sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2))
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
 
-    # Добавление уличных сегментов
     outdoor_segments = {}
     if include_outdoor:
         for outdoor in db.query(OutdoorSegment).all():
@@ -80,7 +76,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
             outdoor_segments[outdoor.id] = (start_vertex, end_vertex)
 
-    # Соединение комнат с сегментами
     for room in rooms:
         room_vertex = f"room_{room.id}"
         connections = db.query(Connection).filter(Connection.room_id == room.id).all()
@@ -92,10 +87,10 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 floor_number = floor.floor_number if floor else room.floor_id
                 segment_data = db.query(Segment).filter(Segment.id == conn.segment_id).first()
                 if segment_data:
-                    if segment_data.start_x == segment_data.end_x:  # Вертикальный сегмент
+                    if segment_data.start_x == segment_data.end_x:
                         x = segment_data.start_x
                         y = room.cab_y
-                    else:  # Горизонтальный сегмент
+                    else:
                         x = room.cab_x
                         y = segment_data.start_y
                     coords = (x, y, floor_number)
@@ -107,7 +102,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_edge(phantom_vertex, segment_start, weight, {"type": "segment"})
                 graph.add_edge(phantom_vertex, segment_end, weight, {"type": "segment"})
 
-    # Обработка соединений (лестницы, двери, улица)
     for conn in db.query(Connection).all():
         if conn.from_segment_id and conn.to_segment_id:
             if conn.from_segment_id not in segments or conn.to_segment_id not in segments:
@@ -122,10 +116,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             stair_start_to = f"stair_start_{conn.to_segment_id}_from_{conn.from_segment_id}"
             from_segment = db.query(Segment).filter(Segment.id == conn.from_segment_id).first()
             if from_segment:
-                # Координаты лестницы на основе from_segment
                 start_coords_from = (from_segment.start_x, from_segment.start_y, from_floor)
                 end_coords_from = (from_segment.end_x, from_segment.end_y, from_floor)
-                # На целевом этаже используем координаты конца from_segment
                 end_coords_to = (from_segment.end_x, from_segment.end_y, to_floor)
                 start_coords_to = (from_segment.start_x, from_segment.start_y, to_floor)
                 logger.info(f"Лестница {stair_start_from}: coords={start_coords_from}, {stair_end_from}: coords={end_coords_from}")
@@ -135,7 +127,6 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_vertex(stair_end_to, {"coords": end_coords_to, "building_id": None})
                 graph.add_vertex(stair_start_to, {"coords": start_coords_to, "building_id": None})
                 weight = conn.weight if conn.weight else 2.0
-                # Соединения: from_segment -> stair_start_from -> stair_end_from -> stair_end_to -> stair_start_to -> to_segment
                 graph.add_edge(from_start, stair_start_from, weight, {"type": "segment"})
                 graph.add_edge(from_end, stair_start_from, weight, {"type": "segment"})
                 graph.add_edge(stair_start_from, stair_end_from, weight, {"type": "лестница"})

@@ -42,10 +42,8 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
     connections = db.query(Connection).all()
     rooms = {f"room_{room.id}": room for room in db.query(Room).all()}
-    # Масштаб: 1 пиксель = 5 метров
-    PIXEL_TO_METER = 5.0
+    PIXEL_TO_METER = 0.5  # 1 пиксель = 0.5 метра
 
-    # Получение end_floor_number
     try:
         end_id = int(end.replace("room_", ""))
         end_room = db.query(Room).filter(Room.id == end_id).first()
@@ -58,7 +56,11 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
     try:
         filtered_points = []
+        skip_next = False
         for i, vertex in enumerate(path):
+            if skip_next:
+                skip_next = False
+                continue
             vertex_data = graph.get_vertex_data(vertex)
             if not vertex_data or "coords" not in vertex_data:
                 logger.error(f"Отсутствуют данные для вершины {vertex}")
@@ -69,6 +71,11 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 for fp in filtered_points
             ):
                 filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
+
+            if "stair_end" in vertex and "from" in vertex and i < len(path) - 1:
+                next_vertex = path[i + 1]
+                if "stair_start" in next_vertex and "from" in next_vertex:
+                    skip_next = True
 
         start_room_added = False
         for i, point in enumerate(filtered_points):
@@ -90,9 +97,10 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 edge_data = graph.get_edge_data(vertex, next_vertex)
                 if edge_data.get("type") == "лестница" and "stair_end" in next_vertex and "from" in next_vertex:
                     prev_floor = filtered_points[i - 1]["floor"] if i > 0 else floor
-                    direction = "вверх" if next_point["floor"] > prev_floor else "вниз"
-                    if not any("лестнице" in instr.lower() for instr in instructions[-1:]):
-                        instructions.append(f"На {prev_floor}-м этаже спуститесь по лестнице на {next_point['floor']}-й этаж" if direction == "вниз" else f"На {prev_floor}-м этаже поднимитесь по лестнице на {next_point['floor']}-й этаж")
+                    if prev_floor != next_point["floor"]:  # Проверяем, что этажи разные
+                        direction = "вверх" if next_point["floor"] > prev_floor else "вниз"
+                        if not any("лестнице" in instr.lower() for instr in instructions[-1:]):
+                            instructions.append(f"На {prev_floor}-м этаже спуститесь по лестнице на {next_point['floor']}-й этаж" if direction == "вниз" else f"На {prev_floor}-м этаже поднимитесь по лестнице на {next_point['floor']}-й этаж")
                 elif edge_data.get("type") == "дверь":
                     if "outdoor" in next_vertex and not any("выйдите" in instr.lower() for instr in instructions[-1:]):
                         instructions.append(f"На {floor}-м этаже выйдите из здания через дверь")
@@ -114,7 +122,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 dy = next_point["y"] - current["y"]
                 distance = round(math.sqrt(dx**2 + dy**2) * PIXEL_TO_METER)
                 if distance < 1:
-                    continue  # Пропускаем шаги короче 1 метра
+                    continue
                 angle = math.degrees(math.atan2(dy, dx))
 
                 if prev_point:
@@ -126,20 +134,20 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                         logger.warning(f"Непрямой угол между {current['vertex']} и {next_point['vertex']}: dx={dx}, dy={dy}")
                         continue
                     if -45 <= turn_angle <= 45:
-                        direction = f"На {floor_data['floor']}-м этаже идите прямо {distance} метров"
+                        direction = f"Идите прямо {distance} метров"
                     elif -135 <= turn_angle < -45:
-                        direction = f"На {floor_data['floor']}-м этаже поверните налево и идите {distance} метров"
+                        direction = f"Поверните налево и идите {distance} метров"
                     elif 45 < turn_angle <= 135:
-                        direction = f"На {floor_data['floor']}-м этаже поверните направо и идите {distance} метров"
+                        direction = f"Поверните направо и идите {distance} метров"
                     else:
-                        continue  # Пропускаем "Развернитесь"
+                        continue
                 else:
                     if not start_room_added:
                         room = rooms.get(start)
                         direction = f"На {floor_data['floor']}-м этаже начните движение из {room.name} {room.cab_id} кабинет"
                         start_room_added = True
                     else:
-                        continue  # Пропускаем повторное "Начните движение"
+                        continue
 
                 directions.append(direction)
 
