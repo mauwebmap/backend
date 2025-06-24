@@ -130,20 +130,20 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
             graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
             # Дальние точки смещаются по X, сохраняя Y
-            far_coords_from = (from_coords[0] + 10, from_coords[1], from_floor)  # Смещение по X
+            far_coords_from = (from_coords[0] + 10, from_coords[1], from_floor)  # Смещение по X, Y остаётся
             far_coords_to = (to_coords[0] + 10, to_coords[1], to_floor)
             graph.add_vertex(phantom_from_far, {"coords": far_coords_from, "building_id": None})
             graph.add_vertex(phantom_to_far, {"coords": far_coords_to, "building_id": None})
             # Соединяем точки
             weight = conn.weight if conn.weight else 2.0
-            graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
-            graph.add_edge(phantom_from_far, phantom_to_far, weight, {"type": "лестница"})
             graph.add_edge(from_start, phantom_from, weight, {"type": "segment"})
             graph.add_edge(from_end, phantom_from, weight, {"type": "segment"})
+            graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
             graph.add_edge(phantom_to, to_start, weight, {"type": "segment"})
             graph.add_edge(phantom_to, to_end, weight, {"type": "segment"})
             graph.add_edge(from_start, phantom_from_far, weight, {"type": "segment"})
             graph.add_edge(from_end, phantom_from_far, weight, {"type": "segment"})
+            graph.add_edge(phantom_from_far, phantom_to_far, weight, {"type": "лестница"})
             graph.add_edge(phantom_to_far, to_start, weight, {"type": "segment"})
             graph.add_edge(phantom_to_far, to_end, weight, {"type": "segment"})
 
