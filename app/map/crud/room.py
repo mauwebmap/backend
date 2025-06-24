@@ -145,8 +145,8 @@ async def create_room(db: Session, room_data: RoomCreate, image_file: Optional[U
         room_dict["coordinates"] = [
             {"x": cab_x - 10, "y": cab_y - 10},  # Верхний левый
             {"x": cab_x + 10, "y": cab_y - 10},  # Верхний правый
-            {"x": cab_x - 10, "y": cab_y + 10},  # Нижний левый
-            {"x": cab_x + 10, "y": cab_y + 10}  # Нижний правый
+            {"x": cab_x + 10, "y": cab_y + 10}, # Нижний правый
+            {"x": cab_x - 10, "y": cab_y + 10}  # Нижний левый
         ]
     elif room_data.coordinates:
         room_dict["coordinates"] = [coord.dict() for coord in room_data.coordinates]
