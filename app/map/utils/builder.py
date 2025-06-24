@@ -84,7 +84,7 @@ def add_room_connections(graph: Graph, db: Session, rooms: list, segments: dict)
                 graph.add_edge(phantom_vertex, segment_end, weight, {"type": "segment"})
 
 def add_stairs_and_doors(graph: Graph, db: Session, segments: dict, floor_numbers: dict, outdoor_segments: dict, include_outdoor: bool) -> None:
-    """Добавляет лестницы и двери в граф."""
+    """Добавляет лестницы и двери в граф, только при смене этажа."""
     for conn in db.query(Connection).all():
         if conn.from_segment_id and conn.to_segment_id:
             if conn.from_segment_id not in segments or conn.to_segment_id not in segments:
@@ -93,6 +93,8 @@ def add_stairs_and_doors(graph: Graph, db: Session, segments: dict, floor_number
             to_start, to_end = segments[conn.to_segment_id]
             from_floor = floor_numbers[conn.from_segment_id]
             to_floor = floor_numbers[conn.to_segment_id]
+            if from_floor == to_floor:
+                continue  # Пропускаем лестницы на одном этаже
             stair_start_from = f"stair_start_{conn.from_segment_id}_to_{conn.to_segment_id}"
             stair_end_from = f"stair_end_{conn.from_segment_id}_to_{conn.to_segment_id}"
             stair_end_to = f"stair_end_{conn.to_segment_id}_from_{conn.from_segment_id}"
