@@ -10,13 +10,11 @@ from app.map.crud.room import (
     get_rooms_by_floor_and_campus,
     search_rooms_by_name_or_cab_id
 )
-from app.map.crud.connection import create_connection
 from app.map.schemas.room import RoomResponse, RoomCreate, RoomUpdate, Coordinates, RoomSearchResponse
 from app.map.schemas.connection import ConnectionCreate
 from app.database.database import get_db
 from app.users.dependencies.auth import admin_required
 import json
-from app.map.models.building import Building
 
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
 
@@ -29,63 +27,33 @@ def read_rooms(
     """Получить список всех комнат. Без авторизации."""
     return get_rooms(db, skip=skip, limit=limit)
 
+
 @router.get("/search", response_model=List[RoomSearchResponse])
 def search_rooms(
-    query: str,
-    campus_id: Optional[int] = None,
-    db: Session = Depends(get_db)
+        query: str,
+        campus_id: Optional[int] = None,
+        db: Session = Depends(get_db)
 ):
     """
     Поиск комнат по названию (name) или номеру кабинета (cab_id) с учётом кампуса.
-    Возвращает список комнат с названием здания.
+    Возвращает список комнат с названием здания и номером этажа.
     Без авторизации.
     """
-    try:
-        if not query:
-            raise HTTPException(status_code=400, detail="Параметр query не может быть пустым")
+    if not query:
+        raise HTTPException(status_code=400, detail="Параметр query не может быть пустым")
 
-        # Выполняем поиск
-        rooms = search_rooms_by_name_or_cab_id(db, query, campus_id)
-
-        if not rooms:
-            return []
-
-        # Формируем ответ с названием здания
-        result = []
-        for room in rooms:
-            # Получаем название здания
-            building = db.query(Building).filter(Building.id == room.building_id).first()
-            building_name = building.name if building else "Неизвестное здание"
-
-            room_response = RoomSearchResponse(
-                id=room.id,
-                name=room.name,
-                cab_id=room.cab_id,
-                building_id=room.building_id,
-                building_name=building_name,
-                floor_id=room.floor_id,
-                cab_x=room.cab_x,
-                cab_y=room.cab_y,
-                description=room.description,
-                image_path=room.image_path
-            )
-            result.append(room_response)
-
-        return result
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка при поиске комнат: {str(e)}")
+    rooms = search_rooms_by_name_or_cab_id(db, query, campus_id)
+    return rooms
 
 @router.get("/{room_id}", response_model=RoomResponse)
 def read_room(
     room_id: int,
     db: Session = Depends(get_db)
 ):
-    """Получить информацию о комнате по ID. Без авторизации."""
+    """Получить информацию о комнате по ID, включая номер этажа. Без авторизации."""
     room = get_room(db, room_id)
     if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+        raise HTTPException(status_code=404, detail="Комната не найдена")
     return room
 
 @router.get("/campus/{campus_id}/floors/{floor_number}/rooms", response_model=List[RoomResponse])

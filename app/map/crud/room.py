@@ -17,8 +17,26 @@ def is_image_file(file: UploadFile):
     mime_type, _ = mimetypes.guess_type(file.filename)
     return mime_type and mime_type.startswith("image/")
 
+
 def get_room(db: Session, room_id: int):
-    return db.query(Room).filter(Room.id == room_id).first()
+    try:
+        # Выполняем SELECT с JOIN для получения floor_number
+        query = (
+            select(Room, Floor.floor_number)
+            .join(Floor, Floor.id == Room.floor_id)
+            .filter(Room.id == room_id)
+        )
+        result = db.execute(query).first()
+        if not result:
+            return None
+
+        # Извлекаем объект Room и floor_number
+        room, floor_number = result
+        # Добавляем floor_number к объекту Room
+        room.floor_number = floor_number
+        return room
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении комнаты: {str(e)}")
 
 def get_rooms(db: Session, skip: int = 0, limit: int = 100):
     try:
@@ -61,7 +79,7 @@ def get_rooms_by_floor_and_campus(db: Session, floor_number: int, campus_id: int
 def search_rooms_by_name_or_cab_id(db: Session, query: str, campus_id: Optional[int] = None) -> List[Room]:
     """
     Ищет комнаты по названию (name) или номеру кабинета (cab_id) с учётом кампуса.
-    Возвращает список комнат с JOIN на таблицу Building для получения имени здания.
+    Возвращает список комнат с JOIN на таблицы Floor и Building для получения номера этажа и имени здания.
     """
     try:
         # Разбиваем строку запроса на части (для поиска по словам)
@@ -76,13 +94,14 @@ def search_rooms_by_name_or_cab_id(db: Session, query: str, campus_id: Optional[
                 Room.cab_id.ilike(term)  # Поиск по номеру кабинета (без учёта регистра)
             ))
 
-        # Если указан campus_id, добавляем фильтр по кампусу
+        # Формируем запрос с JOIN для получения floor_number и building_name
         query = (
-            db.query(Room)
+            select(Room, Floor.floor_number, Building.name.label("building_name"))
             .join(Floor, Floor.id == Room.floor_id)
             .join(Building, Building.id == Floor.building_id)
         )
 
+        # Добавляем фильтр по campus_id, если он указан
         if campus_id is not None:
             query = query.filter(Building.campus_id == campus_id)
 
@@ -90,8 +109,17 @@ def search_rooms_by_name_or_cab_id(db: Session, query: str, campus_id: Optional[
         if conditions:
             query = query.filter(and_(*conditions))
 
-        rooms = query.all()
-        return rooms if rooms else []
+        result = db.execute(query).all()
+        if not result:
+            return []
+
+        # Формируем список объектов Room с добавленными floor_number и building_name
+        rooms = [row[0] for row in result]
+        for room, floor_number, building_name in result:
+            room.floor_number = floor_number
+            room.building_name = building_name
+
+        return rooms
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка при поиске комнат: {str(e)}")
 

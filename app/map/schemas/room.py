@@ -58,7 +58,7 @@ class RoomSearchResponse(BaseModel):
     building_id: int
     building_name: str
     floor_id: int
-    floor_number: int  # Добавляем floor_number
+    floor_number: int
     cab_x: Optional[float] = None
     cab_y: Optional[float] = None
     description: Optional[str] = None
