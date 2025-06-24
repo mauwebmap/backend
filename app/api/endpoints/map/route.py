@@ -140,7 +140,7 @@ def generate_directions(graph: Graph, filtered_points: list, rooms: dict, start:
         final_instructions.append(f"На {end_floor_number}-м этаже вы прибыли в {rooms[end].name} {rooms[end].cab_id} кабинет")
 
     logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
-    return {"path": result, "weight": weight, "instructions": final_instructions}
+    return result, final_instructions  # Возвращаем только путь и инструкции как кортеж
 
 @router.get("/route")
 async def get_route(start: str, end: str, db: Session = Depends(get_db)):
@@ -176,7 +176,7 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Ошибка при получении этажа конечной комнаты: {str(e)}")
 
     filtered_points = filter_path_points(graph, path, db)
-    final_instructions, result = generate_directions(graph, filtered_points, rooms, start, end, end_floor_number, weight)
+    result, final_instructions = generate_directions(graph, filtered_points, rooms, start, end, end_floor_number, weight)
 
     logger.info(f"Маршрут сформирован: путь={result}, вес={weight}, инструкции={final_instructions}")
     return {"path": result, "weight": weight, "instructions": final_instructions}
