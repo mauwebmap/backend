@@ -6,15 +6,14 @@ from app.database.database import get_db
 from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
-from app.map.models.floor import Floor
-from app.map.utils.graph import Graph
+from app.map.models.connection import Connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 PIXEL_TO_METER = 0.05  # 1 пиксель = 0.05 метра
 
 def filter_path_points(graph: Graph, path: list) -> list:
-    """Фильтрует точки пути, убирая лишние лестничные точки и зигзаги."""
+    """Фильтрует точки пути, убирая дубликаты, лестницы на одном этаже и зигзаги."""
     filtered_points = []
     seen_vertices = set()
     skip_next = False
@@ -28,7 +27,7 @@ def filter_path_points(graph: Graph, path: list) -> list:
             raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
         x, y, floor = vertex_data["coords"]
 
-        # Пропускаем, если точка уже была или это лестница на том же этаже
+        # Пропускаем лестничные точки на том же этаже
         is_stair = "stair" in vertex
         if is_stair and i < len(path) - 1:
             next_vertex = path[i + 1]
@@ -37,7 +36,7 @@ def filter_path_points(graph: Graph, path: list) -> list:
                 skip_next = True
                 continue
 
-        # Проверяем зигзаг: если следующая точка возвращается к предыдущей y
+        # Проверяем зигзаг: если следующая точка возвращается к предыдущей y с изменением направления
         if i > 0 and i < len(path) - 1:
             prev_data = graph.get_vertex_data(path[i - 1])
             next_data = graph.get_vertex_data(path[i + 1])
