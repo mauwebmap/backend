@@ -6,8 +6,6 @@ from app.database.database import get_db
 from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
-from app.map.models.connection import Connection
-
 from app.map.models.floor import Floor
 from app.map.utils.graph import Graph
 
@@ -16,46 +14,21 @@ router = APIRouter()
 PIXEL_TO_METER = 0.05  # 1 пиксель = 0.05 метра
 
 def filter_path_points(graph: Graph, path: list) -> list:
-    """Фильтрует точки пути, убирая дубликаты, лестницы на одном этаже и зигзаги."""
+    """Фильтрует точки пути, убирая дубликаты."""
     filtered_points = []
     seen_vertices = set()
-    skip_next = False
     for i, vertex in enumerate(path):
-        if skip_next:
-            skip_next = False
-            continue
         vertex_data = graph.get_vertex_data(vertex)
         if not vertex_data or "coords" not in vertex_data:
             logger.error(f"Отсутствуют данные для вершины {vertex}")
             raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
         x, y, floor = vertex_data["coords"]
-
-        # Пропускаем лестничные точки на том же этаже
-        is_stair = "stair" in vertex
-        if is_stair and i < len(path) - 1:
-            next_vertex = path[i + 1]
-            next_data = graph.get_vertex_data(next_vertex)
-            if next_data and next_data["coords"][2] == floor:  # Тот же этаж
-                skip_next = True
-                continue
-
-        # Проверяем зигзаг: если следующая точка возвращается к предыдущей y с изменением направления
-        if i > 0 and i < len(path) - 1:
-            prev_data = graph.get_vertex_data(path[i - 1])
-            next_data = graph.get_vertex_data(path[i + 1])
-            if prev_data and next_data and prev_data["coords"][1] == y == next_data["coords"][1]:
-                dx_prev = x - prev_data["coords"][0]
-                dx_next = next_data["coords"][0] - x
-                if dx_prev * dx_next < 0:  # Изменение направления (зигзаг)
-                    continue
-
         if vertex not in seen_vertices and (not filtered_points or all(
             abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5 or fp["floor"] != floor
             for fp in filtered_points
         )):
             filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
             seen_vertices.add(vertex)
-
     return filtered_points
 
 def generate_directions(graph: Graph, filtered_points: list, rooms: dict, start: str, end: str, end_floor_number: int) -> list:
