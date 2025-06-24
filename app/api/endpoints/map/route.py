@@ -48,8 +48,9 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
     rooms = {f"room_{room.id}": room for room in db.query(Room).all()}
 
     try:
-        # Фильтрация пути с учётом допустимого смещения (5 единиц)
+        # Фильтрация пути
         filtered_points = []
+        last_stair_coords = None
         for i, vertex in enumerate(path):
             vertex_data = graph.get_vertex_data(vertex)
             if not vertex_data or "coords" not in vertex_data:
@@ -57,13 +58,18 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
             x, y, floor = vertex_data["coords"]
 
-            # Если это точка лестницы, добавляем только нужные точки
-            if "phantom_stair" in vertex and i < len(path) - 1:
-                next_vertex = path[i + 1]
-                next_vertex_data = graph.get_vertex_data(next_vertex)
-                if next_vertex_data and next_vertex_data["coords"][2] != floor:  # Переход на другой этаж
-                    prev_x, prev_y, _ = vertex_data["coords"]  # Координаты точки лестницы
-                    filtered_points.append({"x": prev_x, "y": prev_y, "vertex": vertex, "floor": floor})
+            # Если это точка лестницы
+            if "phantom_stair" in vertex:
+                if i < len(path) - 1:
+                    next_vertex = path[i + 1]
+                    next_vertex_data = graph.get_vertex_data(next_vertex)
+                    if next_vertex_data and next_vertex_data["coords"][2] != floor:  # Переход на другой этаж
+                        last_stair_coords = (x, y, next_vertex_data["coords"][2])  # Сохраняем координаты для нового этажа
+                        continue  # Пропускаем эту точку, ждём следующую после лестницы
+                elif last_stair_coords:  # Если это последняя точка лестницы
+                    x, y, floor = last_stair_coords
+                    filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
+                    last_stair_coords = None
                     continue
 
             if not filtered_points or all(
