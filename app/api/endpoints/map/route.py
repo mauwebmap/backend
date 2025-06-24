@@ -56,6 +56,16 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 logger.error(f"Отсутствуют данные для вершины {vertex}")
                 raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
             x, y, floor = vertex_data["coords"]
+
+            # Если это точка лестницы, добавляем только нужные точки
+            if "phantom_stair" in vertex and i < len(path) - 1:
+                next_vertex = path[i + 1]
+                next_vertex_data = graph.get_vertex_data(next_vertex)
+                if next_vertex_data and next_vertex_data["coords"][2] != floor:  # Переход на другой этаж
+                    prev_x, prev_y, _ = vertex_data["coords"]  # Координаты точки лестницы
+                    filtered_points.append({"x": prev_x, "y": prev_y, "vertex": vertex, "floor": floor})
+                    continue
+
             if not filtered_points or all(
                 abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5
                 for fp in filtered_points
@@ -80,41 +90,13 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 next_point = filtered_points[i + 1]
                 next_vertex = next_point["vertex"]
                 edge_data = graph.get_edge_data(vertex, next_vertex)
-                if edge_data.get("type") == "лестница":
+                if edge_data and edge_data.get("type") == "лестница":
                     prev_floor = filtered_points[i - 1]["floor"] if i > 0 else floor
                     direction = "вверх" if floor > prev_floor else "вниз"
-
-                    if "stair" in vertex:
-                        parts = vertex.split("_")
-                        if len(parts) >= 4:
-                            from_seg = int(parts[2])
-                            to_seg = int(parts[4])
-                            conn = stair_connections.get((from_seg, to_seg))
-                            if conn and conn.from_floor_id and conn.to_floor_id:
-                                stair_end_vertex = f"stair_end_{from_seg}_to_{to_seg}"
-                                stair_end_coords = (x, y, conn.from_floor_id)
-
-                                if "to" in vertex:
-                                    if floor_points[-1]["floor"] != conn.from_floor_id:
-                                        result.append({"floor": current_floor, "points": floor_points})
-                                        floor_points = []
-                                        current_floor = conn.from_floor_id
-                                    if stair_end_vertex not in seen_vertices:
-                                        floor_points.append({"x": x, "y": y, "vertex": stair_end_vertex, "floor": conn.from_floor_id})
-                                        seen_vertices.add(stair_end_vertex)
-                                elif "from" in vertex:
-                                    if floor_points[-1]["floor"] != conn.to_floor_id:
-                                        result.append({"floor": current_floor, "points": floor_points})
-                                        floor_points = []
-                                        current_floor = conn.to_floor_id
-                                    if stair_end_vertex not in seen_vertices:
-                                        floor_points.append({"x": x, "y": y, "vertex": stair_end_vertex, "floor": conn.to_floor_id})
-                                        seen_vertices.add(stair_end_vertex)
-
                     if not any("лестнице" in instr.lower() for instr in instructions[-2:]):
                         instructions.append(f"Спуститесь по лестнице с {prev_floor}-го на {floor}-й этаж" if direction == "вниз" else f"Поднимитесь по лестнице с {prev_floor}-го на {floor}-й этаж")
 
-                elif edge_data.get("type") == "дверь":
+                elif edge_data and edge_data.get("type") == "дверь":
                     if "outdoor" in next_vertex and not any("выйдите" in instr.lower() for instr in instructions[-2:]):
                         instructions.append("Выйдите из здания через дверь")
                     elif "outdoor" in vertex and not any("войдите" in instr.lower() for instr in instructions[-2:]):
