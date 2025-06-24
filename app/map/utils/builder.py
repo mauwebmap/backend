@@ -126,7 +126,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 # Координаты stair_start и stair_end на основе from_segment
                 start_coords_from = (from_segment.start_x, from_segment.start_y, from_floor)
                 end_coords_from = (from_segment.end_x, from_segment.end_y, from_floor)
-                # На целевом этаже используем те же координаты, но с to_floor
+                # На целевом этаже используем те же координаты конца from_segment
                 end_coords_to = (from_segment.end_x, from_segment.end_y, to_floor)
                 start_coords_to = (from_segment.start_x, from_segment.start_y, to_floor)
                 logger.info(f"Лестница {stair_start_from}: coords={start_coords_from}, {stair_end_from}: coords={end_coords_from}")
@@ -136,7 +136,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_vertex(stair_end_to, {"coords": end_coords_to, "building_id": None})
                 graph.add_vertex(stair_start_to, {"coords": start_coords_to, "building_id": None})
                 weight = conn.weight if conn.weight else 2.0
-                # Соединения: from_segment -> stair_start -> stair_end -> stair_end_to -> stair_start_to -> to_segment
+                # Соединения: from_segment -> stair_start_from -> stair_end_from -> stair_end_to -> stair_start_to -> to_segment
                 graph.add_edge(from_start, stair_start_from, weight, {"type": "segment"})
                 graph.add_edge(from_end, stair_start_from, weight, {"type": "segment"})
                 graph.add_edge(stair_start_from, stair_end_from, weight, {"type": "лестница"})
