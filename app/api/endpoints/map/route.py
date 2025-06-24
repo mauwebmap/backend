@@ -6,7 +6,8 @@ from app.database.database import get_db
 from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
-from app.map.models.connection import Connection
+from app.map.models.floor import Floor
+from app.map.utils.graph import Graph
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
