@@ -7,6 +7,7 @@ from app.map.utils.builder import build_graph
 from app.map.utils.pathfinder import find_path
 from app.map.models.room import Room
 from app.map.models.connection import Connection
+from app.map.models.floor import Floor
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,8 +42,19 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
     connections = db.query(Connection).all()
     rooms = {f"room_{room.id}": room for room in db.query(Room).all()}
-    # Масштаб: 1 пиксель = 0.5 метра
-    PIXEL_TO_METER = 0.5
+    # Масштаб: 1 пиксель = 5 метров
+    PIXEL_TO_METER = 5.0
+
+    # Получение end_floor_number
+    try:
+        end_id = int(end.replace("room_", ""))
+        end_room = db.query(Room).filter(Room.id == end_id).first()
+        end_floor = db.query(Floor).filter(Floor.id == end_room.floor_id).first()
+        end_floor_number = end_floor.floor_number if end_floor else end_room.floor_id
+        logger.info(f"end_floor_number={end_floor_number} для комнаты {end}")
+    except Exception as e:
+        logger.error(f"Ошибка при получении end_floor_number для {end}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении этажа конечной комнаты: {str(e)}")
 
     try:
         filtered_points = []

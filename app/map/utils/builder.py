@@ -34,7 +34,7 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
     end_floor_number = end_floor.floor_number if end_floor else end_room.floor_id
     building_ids = {start_room.building_id, end_room.building_id} - {None}
     floor_ids = {start_room.floor_id, end_room.floor_id}
-    logger.info(f"Актуальные ID зданий: {building_ids}, этажей: {floor_ids}")
+    logger.info(f"Актуальные ID зданий: {building_ids}, этажей: {floor_ids}, start_floor_number={start_floor_number}, end_floor_number={end_floor_number}")
 
     # Определяем, нужно ли включать уличные сегменты
     include_outdoor = len(building_ids) > 1
