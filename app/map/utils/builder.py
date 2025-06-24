@@ -92,9 +92,23 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 floor_number = floor.floor_number if floor else room.floor_id
                 segment_data = db.query(Segment).filter(Segment.id == conn.segment_id).first()
                 if segment_data:
-                    t = 0.5
-                    x = segment_data.start_x + t * (segment_data.end_x - segment_data.start_x)
-                    y = segment_data.start_y + t * (segment_data.end_y - segment_data.start_y)
+                    # Проверяем, является ли сегмент лестничным (на основе connections)
+                    stair_conn = db.query(Connection).filter(
+                        Connection.type == "лестница",
+                        Connection.from_segment_id == conn.segment_id
+                    ).first()
+                    if stair_conn:
+                        # Для лестничного сегмента используем координаты конца сегмента
+                        x = segment_data.end_x
+                        y = segment_data.end_y
+                    else:
+                        # Для обычного сегмента используем координаты комнаты, выровненные по оси
+                        if segment_data.start_x == segment_data.end_x:  # Вертикальный сегмент
+                            x = segment_data.start_x
+                            y = room.cab_y
+                        else:  # Горизонтальный сегмент
+                            x = room.cab_x
+                            y = segment_data.start_y
                     coords = (x, y, floor_number)
                 else:
                     coords = (room.cab_x, room.cab_y, floor_number)
@@ -128,10 +142,9 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
                 graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
                 weight = conn.weight if conn.weight else 2.0
+                # Соединяем только с концом сегмента, чтобы начать движение с лестницы
                 graph.add_edge(phantom_from, phantom_to, weight, {"type": "лестница"})
-                graph.add_edge(from_start, phantom_from, weight, {"type": "segment"})
                 graph.add_edge(from_end, phantom_from, weight, {"type": "segment"})
-                graph.add_edge(phantom_to, to_start, weight, {"type": "segment"})
                 graph.add_edge(phantom_to, to_end, weight, {"type": "segment"})
         elif include_outdoor and conn.from_segment_id and conn.to_outdoor_id:
             if conn.from_segment_id not in segments or conn.to_outdoor_id not in outdoor_segments:
@@ -152,12 +165,11 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             from_start, from_end = outdoor_segments[conn.from_outdoor_id]
             to_start, to_end = segments[conn.to_segment_id]
             phantom_to = f"phantom_segment_{conn.to_segment_id}_from_outdoor_{conn.from_outdoor_id}"
-            to_coords = graph.get_vertex_data(to_start)["coords"]
+            to_coords = graph.get_vertex_data(to_end)["coords"]
             graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
             weight = conn.weight if conn.weight else 2.0
             graph.add_edge(from_start, phantom_to, weight, {"type": "дверь"})
             graph.add_edge(from_end, phantom_to, weight, {"type": "дверь"})
-            graph.add_edge(phantom_to, to_start, weight, {"type": "segment"})
             graph.add_edge(phantom_to, to_end, weight, {"type": "segment"})
         elif include_outdoor and conn.from_outdoor_id and conn.to_outdoor_id:
             if conn.from_outdoor_id not in outdoor_segments or conn.to_outdoor_id not in outdoor_segments:

@@ -55,18 +55,14 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
                 logger.error(f"Отсутствуют данные для вершины {vertex}")
                 raise HTTPException(status_code=500, detail=f"Некорректные данные для вершины {vertex}")
             x, y, floor = vertex_data["coords"]
-            # Пропускаем segment_X_start/end после phantom_room_X_segment_Y
+            # Пропускаем segment_X_start/end, если они не являются лестничными
             if i < len(path) - 1 and "phantom_room" in vertex and "segment" in path[i + 1] and path[i + 1].endswith(("_start", "_end")):
-                skip_next = True
-                continue
-            # Пропускаем лишние лестничные точки, сохраняя только ключевые
-            if i < len(path) - 1 and "phantom_stair" in vertex and "phantom_stair" in path[i + 1]:
                 next_vertex = path[i + 1]
-                next_data = graph.get_vertex_data(next_vertex)
-                if next_data["coords"][2] == floor:  # Если на том же этаже, пропускаем
+                if not any(conn.from_segment_id == int(next_vertex.split("_")[1]) and conn.type == "лестница" for conn in connections):
+                    skip_next = True
                     continue
             if not filtered_points or all(
-                abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5
+                abs(x - fp["x"]) > 5 or abs(y - fp["y"]) > 5 or floor != fp["floor"]
                 for fp in filtered_points
             ):
                 filtered_points.append({"x": x, "y": y, "vertex": vertex, "floor": floor})
@@ -111,21 +107,26 @@ async def get_route(start: str, end: str, db: Session = Depends(get_db)):
 
                 dx = next_point["x"] - current["x"]
                 dy = next_point["y"] - current["y"]
-                angle = math.degrees(math.atan2(dy, dx))
+
+                # Проверяем, что движение происходит по прямым углам
+                if abs(dx) > 5 and abs(dy) > 5:
+                    logger.warning(f"Непрямой угол между {current['vertex']} и {next_point['vertex']}: dx={dx}, dy={dy}")
+                    continue  # Пропускаем, если не по оси X или Y
 
                 if prev_point:
                     prev_dx = current["x"] - prev_point["x"]
                     prev_dy = current["y"] - prev_point["y"]
-                    prev_angle = math.degrees(math.atan2(prev_dy, prev_dx))
-                    turn_angle = (angle - prev_angle + 180) % 360 - 180
-                    if -45 <= turn_angle <= 45:
+                    if abs(prev_dx) > 5 and abs(prev_dy) > 5:
+                        logger.warning(f"Непрямой угол в предыдущем шаге: dx={prev_dx}, dy={prev_dy}")
+                        continue
+                    if abs(dx) > 5 and abs(prev_dx) > 5:
                         direction = "Идите прямо"
-                    elif -135 <= turn_angle < -45:
-                        direction = "Поверните налево"
-                    elif 45 < turn_angle <= 135:
-                        direction = "Поверните направо"
+                    elif abs(dy) > 5 and abs(prev_dy) > 5:
+                        direction = "Идите прямо"
+                    elif (abs(dx) > 5 and abs(prev_dy) > 5) or (abs(dy) > 5 and abs(prev_dx) > 5):
+                        direction = "Поверните налево" if (dx > 0 and prev_dy > 0) or (dx < 0 and prev_dy < 0) or (dy > 0 and prev_dx < 0) or (dy < 0 and prev_dx > 0) else "Поверните направо"
                     else:
-                        direction = "Развернитесь"
+                        direction = "Идите прямо"
                 else:
                     room = rooms.get(start) if j == 0 else rooms.get(end) if j == len(floor_points) - 2 else None
                     direction = f"Начните движение из {room.name} {room.cab_id} кабинет" if room else "Начните движение"
