@@ -120,17 +120,17 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             to_start, to_end = segments[conn.to_segment_id]
             from_floor = floor_numbers[conn.from_segment_id]
             to_floor = floor_numbers[conn.to_segment_id]
-            # Используем координаты начала from_segment для консистентного Y
+            # Используем координаты начала from_segment, сохраняя Y
             from_coords = graph.get_vertex_data(from_start)["coords"]
-            to_coords = (from_coords[0], from_coords[1], to_floor)  # Сохраняем Y и X, меняем только этаж
+            to_coords = (from_coords[0], from_coords[1], to_floor)  # Сохраняем Y, меняем только этаж
             phantom_from = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}"
             phantom_to = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}"
             phantom_from_far = f"phantom_stair_{conn.from_segment_id}_to_{conn.to_segment_id}_far"
             phantom_to_far = f"phantom_stair_{conn.to_segment_id}_from_{conn.from_segment_id}_far"
             graph.add_vertex(phantom_from, {"coords": from_coords, "building_id": None})
             graph.add_vertex(phantom_to, {"coords": to_coords, "building_id": None})
-            # Дальние точки также используют тот же Y
-            far_coords_from = (from_coords[0] + 10, from_coords[1], from_floor)  # Смещение по X для "далекой" точки
+            # Дальние точки смещаются по X, сохраняя Y
+            far_coords_from = (from_coords[0] + 10, from_coords[1], from_floor)  # Смещение по X
             far_coords_to = (to_coords[0] + 10, to_coords[1], to_floor)
             graph.add_vertex(phantom_from_far, {"coords": far_coords_from, "building_id": None})
             graph.add_vertex(phantom_to_far, {"coords": far_coords_to, "building_id": None})
