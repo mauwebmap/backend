@@ -10,34 +10,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def build_graph(db: Session, start: str, end: str) -> Graph:
-    logger.info(f"Начало построения графа для start={start}, end={end}")
-    graph = Graph()
-
-    try:
-        start_id = int(start.replace("room_", ""))
-        end_id = int(end.replace("room_", ""))
-        start_room = db.query(Room).filter(Room.id == start_id).first()
-        end_room = db.query(Room).filter(Room.id == end_id).first()
-        if not start_room or not end_room:
-            logger.error(f"Комната с id {start_id} или {end_id} не найдена")
-            raise ValueError(f"Комната с id {start_id} или {end_id} не найдена")
-    except ValueError as e:
-        logger.error(f"Ошибка при парсинге ID комнат из {start} или {end}: {e}")
-        raise ValueError(f"Неверный формат комнаты, ожидается room_<id>, получено {start} или {end}")
-
-    start_floor = db.query(Floor).filter(Floor.id == start_room.floor_id).first()
-    end_floor = db.query(Floor).filter(Floor.id == end_room.floor_id).first()
-    start_floor_number = start_floor.floor_number if start_floor else start_room.floor_id
-    end_floor_number = end_floor.floor_number if end_floor else end_room.floor_id
-    building_ids = {start_room.building_id, end_room.building_id} - {None}
-    floor_ids = {start_room.floor_id, end_room.floor_id}
-    logger.info(f"Актуальные ID зданий: {building_ids}, этажей: {floor_ids}, start_floor_number={start_floor_number}, end_floor_number={end_floor_number}")
-
-    include_outdoor = len(building_ids) > 1
-    if not include_outdoor:
-        logger.info("Уличные сегменты отключены, так как комнаты в одном здании")
-
+def add_rooms(graph: Graph, db: Session, building_ids: set) -> None:
+    """Добавляет комнаты в граф."""
     rooms = db.query(Room).filter(Room.building_id.in_(building_ids)).all()
     for room in rooms:
         if not hasattr(room, 'floor_id'):
@@ -48,6 +22,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         vertex = f"room_{room.id}"
         graph.add_vertex(vertex, {"coords": (room.cab_x, room.cab_y, floor_number), "building_id": room.building_id})
 
+def add_segments(graph: Graph, db: Session, building_ids: set) -> dict:
+    """Добавляет сегменты в граф и возвращает словарь сегментов."""
     segments = {}
     floor_numbers = {}
     segment_query = db.query(Segment).filter(Segment.building_id.in_(building_ids)).all()
@@ -62,20 +38,25 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
         segments[segment.id] = (start_vertex, end_vertex)
         weight = max(0.1, math.sqrt((segment.end_x - segment.start_x) ** 2 + (segment.end_y - segment.start_y) ** 2))
         graph.add_edge(start_vertex, end_vertex, weight, {"type": "segment"})
+    return segments, floor_numbers
 
+def add_outdoor_segments(graph: Graph, db: Session) -> dict:
+    """Добавляет уличные сегменты в граф."""
     outdoor_segments = {}
-    if include_outdoor:
-        for outdoor in db.query(OutdoorSegment).all():
-            start_vertex = f"outdoor_{outdoor.id}_start"
-            end_vertex = f"outdoor_{outdoor.id}_end"
-            coords_start = (outdoor.start_x, outdoor.start_y, 1)
-            coords_end = (outdoor.end_x, outdoor.end_y, 1)
-            graph.add_vertex(start_vertex, {"coords": coords_start, "building_id": None})
-            graph.add_vertex(end_vertex, {"coords": coords_end, "building_id": None})
-            weight = outdoor.weight if outdoor.weight else max(0.1, math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2))
-            graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
-            outdoor_segments[outdoor.id] = (start_vertex, end_vertex)
+    for outdoor in db.query(OutdoorSegment).all():
+        start_vertex = f"outdoor_{outdoor.id}_start"
+        end_vertex = f"outdoor_{outdoor.id}_end"
+        coords_start = (outdoor.start_x, outdoor.start_y, 1)
+        coords_end = (outdoor.end_x, outdoor.end_y, 1)
+        graph.add_vertex(start_vertex, {"coords": coords_start, "building_id": None})
+        graph.add_vertex(end_vertex, {"coords": coords_end, "building_id": None})
+        weight = outdoor.weight if outdoor.weight else max(0.1, math.sqrt((outdoor.end_x - outdoor.start_x) ** 2 + (outdoor.end_y - outdoor.start_y) ** 2))
+        graph.add_edge(start_vertex, end_vertex, weight, {"type": "outdoor"})
+        outdoor_segments[outdoor.id] = (start_vertex, end_vertex)
+    return outdoor_segments
 
+def add_room_connections(graph: Graph, db: Session, rooms: list, segments: dict) -> None:
+    """Добавляет связи между комнатами и сегментами."""
     for room in rooms:
         room_vertex = f"room_{room.id}"
         connections = db.query(Connection).filter(Connection.room_id == room.id).all()
@@ -102,6 +83,8 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
                 graph.add_edge(phantom_vertex, segment_start, weight, {"type": "segment"})
                 graph.add_edge(phantom_vertex, segment_end, weight, {"type": "segment"})
 
+def add_stairs_and_doors(graph: Graph, db: Session, segments: dict, floor_numbers: dict, outdoor_segments: dict, include_outdoor: bool) -> None:
+    """Добавляет лестницы и двери в граф."""
     for conn in db.query(Connection).all():
         if conn.from_segment_id and conn.to_segment_id:
             if conn.from_segment_id not in segments or conn.to_segment_id not in segments:
@@ -168,6 +151,42 @@ def build_graph(db: Session, start: str, end: str) -> Graph:
             weight = conn.weight if conn.weight else 10.0
             graph.add_edge(from_start, to_start, weight, {"type": "улица"})
             graph.add_edge(from_end, to_end, weight, {"type": "улица"})
+
+def build_graph(db: Session, start: str, end: str) -> Graph:
+    logger.info(f"Начало построения графа для start={start}, end={end}")
+    graph = Graph()
+
+    try:
+        start_id = int(start.replace("room_", ""))
+        end_id = int(end.replace("room_", ""))
+        start_room = db.query(Room).filter(Room.id == start_id).first()
+        end_room = db.query(Room).filter(Room.id == end_id).first()
+        if not start_room or not end_room:
+            logger.error(f"Комната с id {start_id} или {end_id} не найдена")
+            raise ValueError(f"Комната с id {start_id} или {end_id} не найдена")
+    except ValueError as e:
+        logger.error(f"Ошибка при парсинге ID комнат из {start} или {end}: {e}")
+        raise ValueError(f"Неверный формат комнаты, ожидается room_<id>, получено {start} или {end}")
+
+    start_floor = db.query(Floor).filter(Floor.id == start_room.floor_id).first()
+    end_floor = db.query(Floor).filter(Floor.id == end_room.floor_id).first()
+    start_floor_number = start_floor.floor_number if start_floor else start_room.floor_id
+    end_floor_number = end_floor.floor_number if end_floor else end_room.floor_id
+    building_ids = {start_room.building_id, end_room.building_id} - {None}
+    floor_ids = {start_room.floor_id, end_room.floor_id}
+    logger.info(f"Актуальные ID зданий: {building_ids}, этажей: {floor_ids}, start_floor_number={start_floor_number}, end_floor_number={end_floor_number}")
+
+    include_outdoor = len(building_ids) > 1
+    if not include_outdoor:
+        logger.info("Уличные сегменты отключены, так как комнаты в одном здании")
+    else:
+        logger.info("Уличные сегменты включены, так как комнаты в разных зданиях")
+
+    add_rooms(graph, db, building_ids)
+    segments, floor_numbers = add_segments(graph, db, building_ids)
+    outdoor_segments = add_outdoor_segments(graph, db) if include_outdoor else {}
+    add_room_connections(graph, db, db.query(Room).filter(Room.building_id.in_(building_ids)).all(), segments)
+    add_stairs_and_doors(graph, db, segments, floor_numbers, outdoor_segments, include_outdoor)
 
     logger.info(f"Граф построен: {len(graph.vertices)} вершин, {sum(len(neighbors) for neighbors in graph.edges.values()) // 2} рёбер")
     return graph
